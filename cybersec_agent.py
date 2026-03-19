@@ -37,7 +37,7 @@ CONFIG = {
         "vulnerability", "exploit", "breach", "malware", "phishing",
         "SIEM", "SOC", "incident response", "threat intelligence"
     ],
-    "output_dir": Path.home() / ".cybersec_briefings"
+    "output_dir": Path(os.getenv("OUTPUT_DIR", str(Path.home() / "Documents/cybersec_briefings")))
 }
 
 class CybersecNewsAgent:
