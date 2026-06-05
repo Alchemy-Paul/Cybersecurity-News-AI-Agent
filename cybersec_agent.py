@@ -169,7 +169,7 @@ Keep it concise, actionable, and focused on what matters for security operations
 
         try:
             # Allow configuring model and endpoint via environment if needed
-            groq_model = os.getenv("GROQ_MODEL", "groq2-mini")
+            groq_model = os.getenv("GROQ_MODEL", "meta-llama/llama-4-scout-17b-16e-instruct")
             groq_endpoint = os.getenv("GROQ_ENDPOINT", "https://api.groq.com/openai/v1/chat/completions")
 
             response = requests.post(
