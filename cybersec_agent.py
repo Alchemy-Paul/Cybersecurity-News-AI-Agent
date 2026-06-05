@@ -44,14 +44,14 @@ CONFIG = {
             "type": "hn"
         },
         {
-            "name": "Reddit r/netsec",
-            "url": "https://www.reddit.com/r/netsec/hot.json?limit=15",
-            "type": "reddit"
+            "name": "Hacker News - Malware",
+            "url": "https://hn.algolia.com/api/v1/search?tags=story&query=malware,ransomware,phishing,exploit",
+            "type": "hn"
         },
         {
-            "name": "Reddit r/cybersecurity", 
-            "url": "https://www.reddit.com/r/cybersecurity/hot.json?limit=15",
-            "type": "reddit"
+            "name": "Hacker News - CVE",
+            "url": "https://hn.algolia.com/api/v1/search?tags=story&query=CVE,zero-day,vulnerability,patch",
+            "type": "hn"
         }
     ],
     "keywords_priority": [
@@ -168,14 +168,18 @@ Please provide:
 Keep it concise, actionable, and focused on what matters for security operations."""
 
         try:
+            # Allow configuring model and endpoint via environment if needed
+            groq_model = os.getenv("GROQ_MODEL", "groq2-mini")
+            groq_endpoint = os.getenv("GROQ_ENDPOINT", "https://api.groq.com/openai/v1/chat/completions")
+
             response = requests.post(
-                "https://api.groq.com/openai/v1/chat/completions",
+                groq_endpoint,
                 headers={
                     "Authorization": f"Bearer {groq_api_key}",
                     "Content-Type": "application/json"
                 },
                 json={
-                    "model": "llama3-8b-8192",
+                    "model": groq_model,
                     "max_tokens": 1500,
                     "messages": [
                         {"role": "user", "content": prompt}
@@ -183,15 +187,30 @@ Keep it concise, actionable, and focused on what matters for security operations
                 },
                 timeout=30
             )
-            
+
             if response.status_code == 200:
                 result = response.json()
-                briefing = result["choices"][0]["message"]["content"]
-                return briefing
+                # OpenAI/Groq-compatible chat response
+                briefing = None
+                try:
+                    briefing = result["choices"][0]["message"]["content"]
+                except Exception:
+                    # Fallback to other possible fields
+                    if isinstance(result.get("text"), str):
+                        briefing = result.get("text")
+                    elif isinstance(result.get("output"), list) and result["output"]:
+                        first_output = result["output"][0]
+                        briefing = (first_output.get("content") if isinstance(first_output, dict) else str(first_output))
+
+                if briefing:
+                    return briefing
+
+                print("⚠️  Unexpected Groq response format, falling back to basic briefing.")
+                return self.generate_basic_briefing()
             else:
                 print(f"❌ Groq API error: {response.status_code} - {response.text}")
                 return self.generate_basic_briefing()
-                
+
         except Exception as e:
             print(f"❌ Error calling Groq API: {e}")
             return self.generate_basic_briefing()
