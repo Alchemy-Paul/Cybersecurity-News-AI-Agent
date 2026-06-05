@@ -12,9 +12,31 @@ import requests
 from datetime import datetime, timedelta
 from pathlib import Path
 
+
+def load_env_file(path=".env"):
+    env_path = Path(path)
+    if not env_path.exists():
+        return
+
+    with env_path.open("r") as f:
+        for line in f:
+            line = line.strip()
+            if not line or line.startswith("#"):
+                continue
+            if "=" not in line:
+                continue
+            key, value = line.split("=", 1)
+            key = key.strip()
+            value = value.strip().strip('"').strip("'")
+            if key and key not in os.environ:
+                os.environ[key] = value
+
+
+load_env_file()
+
 # Configuration
 CONFIG = {
-    "anthropic_api_key": os.getenv("ANTHROPIC_API_KEY", ""),
+    "groq_api_key": os.getenv("GROQ_API_KEY", ""),
     "news_sources": [
         {
             "name": "Hacker News - Security",
@@ -37,14 +59,15 @@ CONFIG = {
         "vulnerability", "exploit", "breach", "malware", "phishing",
         "SIEM", "SOC", "incident response", "threat intelligence"
     ],
-    "output_dir": Path(os.getenv("OUTPUT_DIR", str(Path.home() / "Documents/cybersec_briefings")))
+    "output_dir": Path(os.getenv("OUTPUT_DIR", str(Path.home() / "Documents/cybersec_briefings"))),
+    "slack_webhook_url": os.getenv("SLACK_WEBHOOK_URL", "")
 }
 
 class CybersecNewsAgent:
     def __init__(self):
         self.config = CONFIG
         self.stories = []
-        self.config["output_dir"].mkdir(exist_ok=True)
+        self.config["output_dir"].mkdir(parents=True, exist_ok=True)
         
     def fetch_hackernews(self, source):
         """Fetch stories from Hacker News API"""
@@ -114,18 +137,18 @@ class CybersecNewsAgent:
         self.stories.sort(key=lambda x: x["priority_score"], reverse=True)
     
     def generate_ai_briefing(self):
-        """Use Claude to generate an intelligent briefing"""
-        if not self.config["anthropic_api_key"]:
-            print("⚠️  No Anthropic API key found. Set ANTHROPIC_API_KEY environment variable.")
-            print("Generating basic briefing without AI analysis...")
+        """Use Groq to generate an intelligent briefing"""
+        groq_api_key = os.getenv("GROQ_API_KEY", "")
+        if not groq_api_key:
+            print("⚠️  No Groq API key found. Set GROQ_API_KEY environment variable.")
             return self.generate_basic_briefing()
         
-        print("🤖 Generating AI-powered briefing with Claude...")
+        print("🤖 Generating AI-powered briefing with Groq...")
         
-        # Prepare top stories for Claude
+        # Prepare top stories
         top_stories = self.stories[:20]
         stories_text = "\n\n".join([
-            f"**{i+1}. {story['title']}**\n"
+            f"{i+1}. {story['title']}\n"
             f"Source: {story['source']} | Points: {story['points']} | Comments: {story['comments']}\n"
             f"URL: {story['url']}"
             for i, story in enumerate(top_stories)
@@ -137,24 +160,23 @@ Today's Cybersecurity News Stories:
 {stories_text}
 
 Please provide:
-1. **Executive Summary** (2-3 sentences on the overall threat landscape today)
-2. **Critical Items** (Top 3-5 most important stories for a SOC analyst, with brief explanation of why they matter)
-3. **Trending Topics** (What themes are emerging?)
-4. **Recommended Actions** (Any immediate steps a SOC analyst should consider based on today's news)
+1. EXECUTIVE SUMMARY (2-3 sentences on the overall threat landscape today)
+2. CRITICAL ITEMS (Top 3-5 most important stories for a SOC analyst, with brief explanation of why they matter)
+3. TRENDING TOPICS (What themes are emerging?)
+4. RECOMMENDED ACTIONS (Any immediate steps a SOC analyst should consider based on today's news)
 
-Keep it concise, actionable, and focused on what matters for security operations. Use clear headings and bullet points."""
+Keep it concise, actionable, and focused on what matters for security operations."""
 
         try:
             response = requests.post(
-                "https://api.anthropic.com/v1/messages",
+                "https://api.groq.com/openai/v1/chat/completions",
                 headers={
-                    "x-api-key": self.config["anthropic_api_key"],
-                    "anthropic-version": "2023-06-01",
-                    "content-type": "application/json"
+                    "Authorization": f"Bearer {groq_api_key}",
+                    "Content-Type": "application/json"
                 },
                 json={
-                    "model": "claude-sonnet-4-20250514",
-                    "max_tokens": 2000,
+                    "model": "llama3-8b-8192",
+                    "max_tokens": 1500,
                     "messages": [
                         {"role": "user", "content": prompt}
                     ]
@@ -164,14 +186,14 @@ Keep it concise, actionable, and focused on what matters for security operations
             
             if response.status_code == 200:
                 result = response.json()
-                briefing = result["content"][0]["text"]
+                briefing = result["choices"][0]["message"]["content"]
                 return briefing
             else:
-                print(f"❌ API error: {response.status_code}")
+                print(f"❌ Groq API error: {response.status_code} - {response.text}")
                 return self.generate_basic_briefing()
                 
         except Exception as e:
-            print(f"❌ Error calling Claude API: {e}")
+            print(f"❌ Error calling Groq API: {e}")
             return self.generate_basic_briefing()
     
     def generate_basic_briefing(self):
@@ -201,7 +223,65 @@ Keep it concise, actionable, and focused on what matters for security operations
         
         print(f"\n💾 Briefing saved to: {filename}")
         return filename
+
+    def send_to_slack(self, briefing):
+        """Send briefing to Slack channel"""
+        webhook_url = self.config.get("slack_webhook_url", "")
+        if not webhook_url:
+            print("⚠️  No Slack webhook URL configured. Set SLACK_WEBHOOK_URL in your environment or .env file.")
+            return
     
+        # Format for Slack - keep it concise
+        date_str = datetime.now().strftime("%B %d, %Y")
+    
+        slack_message = {
+            "text": f"🛡️ *DAILY SOC BRIEFING — {date_str}*",
+            "blocks": [
+                {
+                    "type": "header",
+                    "text": {
+                        "type": "plain_text",
+                        "text": f"🛡️ Daily SOC Briefing — {date_str}"
+                    }
+                },
+                {
+                    "type": "divider"
+                },
+                {
+                    "type": "section",
+                    "text": {
+                        "type": "mrkdwn",
+                        "text": briefing[:2900]  # Slack block limit
+                    }
+                },
+                {
+                    "type": "divider"
+                },
+                {
+                    "type": "context",
+                    "elements": [
+                        {
+                            "type": "mrkdwn",
+                            "text": "🤖 Generated by Cybersecurity News AI Agent | Full briefing saved locally"
+                        }
+                    ]
+                }
+            ]
+        }
+        
+        try:
+            response = requests.post(
+                webhook_url,
+                json=slack_message,
+                timeout=10
+            )
+            if response.status_code == 200:
+                print("✅ Briefing sent to Slack successfully!")
+            else:
+                print(f"❌ Slack error: {response.status_code} - {response.text}")
+        except Exception as e:
+            print(f"❌ Error sending to Slack: {e}")
+
     def display_briefing(self, briefing):
         """Display briefing in terminal"""
         print("\n" + "="*80)
@@ -229,6 +309,9 @@ Keep it concise, actionable, and focused on what matters for security operations
         
         # Display
         self.display_briefing(briefing)
+        
+        # Send to Slack
+        self.send_to_slack(briefing)
         
         # Save
         filepath = self.save_briefing(briefing)

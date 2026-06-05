@@ -4,7 +4,7 @@ An intelligent daily briefing system for SOC analysts and cybersecurity professi
 
 ## Features
 
-- **AI-Powered Analysis** using Claude (Anthropic)
+- **AI-Powered Analysis** using Groq
 - **Multi-Source Aggregation** (Hacker News, Reddit r/netsec, r/cybersecurity)
 - **Smart Prioritization** based on SOC-relevant keywords
 - **Automatic Archiving** of daily briefings
@@ -18,7 +18,7 @@ An intelligent daily briefing system for SOC analysts and cybersecurity professi
 - Pop!_OS 24.04 (or any Debian/Ubuntu-based Linux) - my setup
 - Python 3.8+
 - Internet connection
-- Anthropic API key (optional but recommended)
+- Groq API key (optional but recommended)
 
 ### Installation
 
@@ -34,10 +34,10 @@ chmod +x setup.sh
 ./setup.sh
 ```
 
-3. **Configure your API key:**
+3. **Configure your environment:**
 ```bash
 cp .env.example .env
-nano .env  # Add your Anthropic API key
+nano .env  # Add your Groq API key and Slack webhook URL
 ```
 
 4. **Test the agent:**
