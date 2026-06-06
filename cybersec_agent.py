@@ -384,9 +384,9 @@ Keep it concise, actionable, and focused on what matters for security operations
         # Prioritize
         self.prioritize_stories()
         
-        # Generate briefing
-        briefing = self.generate_ai_briefing()
-        
+        # Tag CVE severity
+        self.tag_cve_stories()
+
         # Display
         self.display_briefing(briefing)
         
