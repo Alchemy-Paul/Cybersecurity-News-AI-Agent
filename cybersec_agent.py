@@ -233,10 +233,12 @@ Keep it concise, actionable, and focused on what matters for security operations
         
         # Known false positives to filter out
         false_positives = {
-            "github.com", "google.com", "microsoft.com", "apple.com",
-            "reddit.com", "twitter.com", "linkedin.com", "youtube.com",
-            "amazon.com", "cloudflare.com", "wikipedia.org"
-        }
+        "github.com", "google.com", "microsoft.com", "apple.com",
+        "reddit.com", "twitter.com", "linkedin.com", "youtube.com",
+        "amazon.com", "cloudflare.com", "wikipedia.org",
+        "news.ycombinator.com", "duo.com", "threatpost.com",
+        "www.cytidel.com", "ycombinator.com"
+    }
         
         iocs = {
             "ipv4": set(),
@@ -254,7 +256,7 @@ Keep it concise, actionable, and focused on what matters for security operations
                 for match in matches:
                     if ioc_type == "domain" and match.lower() in false_positives:
                         continue
-                    iocs[ioc_type].add(match)
+                    iocs[ioc_type].add(match.upper() if ioc_type == "cve" else match)
         
         # Convert sets to sorted lists
         self.iocs = {k: sorted(list(v)) for k, v in iocs.items()}
