@@ -150,7 +150,7 @@ class CybersecNewsAgent:
         stories_text = "\n\n".join([
             f"{i+1}. {story['title']}\n"
             f"Source: {story['source']} | Points: {story['points']} | Comments: {story['comments']}\n"
-            f"CVEs: {', '.join([f\"{c['id']} {c['tag'] or 'UNKNOWN'} (CVSS: {c['score']})\" for c in story.get('cves', [])]) or 'None detected'}\n"
+            f"CVEs: {', '.join([c['id'] + ' ' + (c['tag'] or 'UNKNOWN') for c in story.get('cves', [])]) or 'None detected'}\n"
             f"URL: {story['url']}"
             for i, story in enumerate(top_stories)
         ])
