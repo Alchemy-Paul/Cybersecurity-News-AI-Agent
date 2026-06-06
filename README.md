@@ -10,6 +10,7 @@ An AI-powered SOC briefing agent that automatically fetches cybersecurity news, 
 - **Multi-Source Aggregation** (Hacker News, Reddit r/netsec, r/cybersecurity)
 - **Smart Prioritization** based on SOC-relevant keywords
 - **CVE Detection from headlines** using regex extraction of CVE IDs
+- **IOC Extraction** from story titles and URLs with domain, IP, hash, and CVE detection
 - **NVD/CVSS Enrichment** to fetch severity scores and tag critical vulnerabilities
 - **Automatic Archiving** of daily briefings
 - **Scheduled Execution** via systemd or cron
@@ -20,6 +21,8 @@ An AI-powered SOC briefing agent that automatically fetches cybersecurity news, 
 ![Agent briefing output](2026-06-06_22-26.png)
 
 ![CVE enrichment and scoring](2026-06-06_22-46.png)
+
+![IOC watchlist report](2026-06-06_23-49.png)
 
 ## Quick Start
 
