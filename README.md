@@ -34,8 +34,8 @@ An AI-powered SOC briefing agent that automatically fetches cybersecurity news, 
 
 1. **Clone the repository:**
 ```bash
-git clone https://github.com/YOUR-USERNAME/cybersec-news-agent.git
-cd cybersec-news-agent
+git clone https://github.com/Alchemy-Paul/Cybersecurity-News-AI-Agent.git
+cd Cybersecurity-News-AI-Agent
 ```
 
 2. **Configure your environment:**
