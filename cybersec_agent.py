@@ -388,6 +388,12 @@ Keep it concise, actionable, and focused on what matters for security operations
         # Tag CVE severity
         self.tag_cve_stories()
 
+        # Generate briefing content
+        briefing = self.generate_ai_briefing()
+        if not briefing:
+            print("❌ Failed to generate briefing.")
+            return
+
         # Display
         self.display_briefing(briefing)
         
