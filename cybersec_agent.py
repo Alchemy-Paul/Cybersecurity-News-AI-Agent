@@ -215,6 +215,67 @@ Keep it concise, actionable, and focused on what matters for security operations
             print(f"❌ Error calling Groq API: {e}")
             return self.generate_basic_briefing()
     
+    def get_cve_severity(self, cve_id):
+        """Fetch CVE severity from NVD API"""
+        try:
+            url = f"https://services.nvd.nist.gov/rest/json/cves/2.0?cveId={cve_id}"
+            response = requests.get(url, timeout=10)
+            if response.status_code == 200:
+                data = response.json()
+                vulnerabilities = data.get("vulnerabilities", [])
+                if vulnerabilities:
+                    cve_data = vulnerabilities[0].get("cve", {})
+                    metrics = cve_data.get("metrics", {})
+                    
+                    # Try CVSSv3 first, then CVSSv2
+                    if metrics.get("cvssMetricV31"):
+                        score = metrics["cvssMetricV31"][0]["cvssData"]["baseScore"]
+                    elif metrics.get("cvssMetricV30"):
+                        score = metrics["cvssMetricV30"][0]["cvssData"]["baseScore"]
+                    elif metrics.get("cvssMetricV2"):
+                        score = metrics["cvssMetricV2"][0]["cvssData"]["baseScore"]
+                    else:
+                        return None, None
+                    
+                    # Tag by severity
+                    if score >= 9.0:
+                        tag = "🔴 CRITICAL"
+                    elif score >= 7.0:
+                        tag = "🟠 HIGH"
+                    elif score >= 4.0:
+                        tag = "🟡 MEDIUM"
+                    else:
+                        tag = "🟢 LOW"
+                    
+                    return score, tag
+        except Exception as e:
+            print(f"⚠️  Could not fetch severity for {cve_id}: {e}")
+        return None, None
+
+    def tag_cve_stories(self):
+        """Scan stories for CVE IDs and enrich with severity data"""
+        import re
+        cve_pattern = re.compile(r'CVE-\d{4}-\d{4,7}', re.IGNORECASE)
+        
+        print("🔎 Scanning for CVEs and fetching severity scores...")
+        
+        for story in self.stories:
+            cves = cve_pattern.findall(story["title"])
+            if cves:
+                story["cves"] = []
+                for cve_id in set(cves):  # deduplicate
+                    cve_id = cve_id.upper()
+                    score, tag = self.get_cve_severity(cve_id)
+                    story["cves"].append({
+                        "id": cve_id,
+                        "score": score,
+                        "tag": tag
+                    })
+                    if tag:
+                        print(f"  {tag} | {cve_id} (CVSS: {score}) — {story['title'][:60]}...")
+                    else:
+                        print(f"  ⚪ UNKNOWN | {cve_id} — {story['title'][:60]}...")
+    
     def generate_basic_briefing(self):
         """Generate a basic briefing without AI"""
         briefing = "# Cybersecurity Daily Briefing\n\n"
