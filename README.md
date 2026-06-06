@@ -15,6 +15,12 @@ An AI-powered SOC briefing agent that automatically fetches cybersecurity news, 
 - **Scheduled Execution** via systemd or cron
 - **Executive Summaries** tailored for security operations
 
+## Screenshots
+
+![Agent briefing output](2026-06-06_22-26.png)
+
+![CVE enrichment and scoring](2026-06-06_22-46.png)
+
 ## Quick Start
 
 ### Prerequisites
