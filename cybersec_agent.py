@@ -9,6 +9,7 @@ import os
 import sys
 import json
 import requests
+import feedparser
 from datetime import datetime, timedelta
 from pathlib import Path
 
@@ -122,6 +123,24 @@ class CybersecNewsAgent:
         except Exception as e:
             print(f"Error fetching {source['name']}: {e}")
     
+    def fetch_rss(self, source):
+        """Fetch stories from RSS feeds"""
+        try:
+            import feedparser
+            feed = feedparser.parse(source["url"])
+            
+            for entry in feed.entries[:10]:
+                self.stories.append({
+                    "title": entry.get("title", ""),
+                    "url": entry.get("link", ""),
+                    "source": source["name"],
+                    "points": 0,
+                    "comments": 0,
+                    "created": entry.get("published", "")
+                })
+        except Exception as e:
+            print(f"Error fetching {source['name']}: {e}")
+    
     def fetch_all_news(self):
         """Fetch news from all configured sources"""
         print("🔍 Fetching latest cybersecurity news...")
@@ -131,6 +150,8 @@ class CybersecNewsAgent:
                 self.fetch_hackernews(source)
             elif source["type"] == "reddit":
                 self.fetch_reddit(source)
+            elif source["type"] == "rss":
+                self.fetch_rss(source)
         
         # Sort by relevance (points/score)
         self.stories.sort(key=lambda x: x.get("points", 0), reverse=True)
