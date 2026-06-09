@@ -44,14 +44,29 @@ CONFIG = {
             "type": "hn"
         },
         {
-            "name": "Hacker News - Malware",
-            "url": "https://hn.algolia.com/api/v1/search?tags=story&query=malware,ransomware,phishing,exploit",
-            "type": "hn"
-        },
-        {
             "name": "Hacker News - CVE",
             "url": "https://hn.algolia.com/api/v1/search?tags=story&query=CVE,zero-day,vulnerability,patch",
             "type": "hn"
+        },
+        {
+            "name": "Cybersecurity News",
+            "url": "https://cybersecuritynews.com/feed/",
+            "type": "rss"
+        },
+        {
+            "name": "The Hacker News",
+            "url": "https://feeds.feedburner.com/TheHackersNews",
+            "type": "rss"
+        },
+        {
+            "name": "BleepingComputer",
+            "url": "https://www.bleepingcomputer.com/feed/",
+            "type": "rss"
+        },
+        {
+            "name": "Securelist",
+            "url": "https://securelist.com/feed/",
+            "type": "rss"
         }
     ],
     "keywords_priority": [
