@@ -148,8 +148,6 @@ class CybersecNewsAgent:
         for source in self.config["news_sources"]:
             if source["type"] == "hn":
                 self.fetch_hackernews(source)
-            elif source["type"] == "reddit":
-                self.fetch_reddit(source)
             elif source["type"] == "rss":
                 self.fetch_rss(source)
         
