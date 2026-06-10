@@ -7,7 +7,7 @@ An AI-powered SOC briefing agent that automatically fetches cybersecurity news, 
 ## Features
 
 - **AI-Powered Analysis** using Groq
-- **Multi-Source Aggregation** (Hacker News, Reddit r/netsec, r/cybersecurity)
+- **Multi-Source Aggregation**  (Hacker News, BleepingComputer, The Hacker News, Cybersecurity News, and Securelist RSS feeds)
 - **Smart Prioritization** based on SOC-relevant keywords
 - **CVE Detection from headlines** using regex extraction of CVE IDs
 - **IOC Extraction** from story titles and URLs with domain, IP, hash, and CVE detection
