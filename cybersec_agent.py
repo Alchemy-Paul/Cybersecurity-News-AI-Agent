@@ -36,6 +36,8 @@ def load_env_file(path=".env"):
 load_env_file()
 
 # Configuration
+DEFAULT_OUTPUT_DIR = Path(__file__).resolve().parent / "output"
+
 CONFIG = {
     "groq_api_key": os.getenv("GROQ_API_KEY", ""),
     "news_sources": [
@@ -75,7 +77,7 @@ CONFIG = {
         "vulnerability", "exploit", "breach", "malware", "phishing",
         "SIEM", "SOC", "incident response", "threat intelligence"
     ],
-    "output_dir": Path(os.getenv("OUTPUT_DIR", str(Path.home() / "Documents/cybersec_briefings"))),
+    "output_dir": Path(os.getenv("OUTPUT_DIR", str(DEFAULT_OUTPUT_DIR))),
     "slack_webhook_url": os.getenv("SLACK_WEBHOOK_URL", "")
 }
 
@@ -84,6 +86,10 @@ class CybersecNewsAgent:
         self.config = CONFIG
         self.stories = []
         self.config["output_dir"].mkdir(parents=True, exist_ok=True)
+        self.config["briefing_dir"] = self.config["output_dir"] / "briefings"
+        self.config["ioc_dir"] = self.config["output_dir"] / "ioc_watchlists"
+        self.config["briefing_dir"].mkdir(parents=True, exist_ok=True)
+        self.config["ioc_dir"].mkdir(parents=True, exist_ok=True)
         
     def fetch_hackernews(self, source):
         """Fetch stories from Hacker News API"""
@@ -310,7 +316,7 @@ Keep it concise, actionable, and focused on what matters for security operations
     def save_ioc_report(self):
         """Save IOCs to a separate watchlist file"""
         timestamp = datetime.now().strftime("%Y-%m-%d")
-        filename = self.config["output_dir"] / f"ioc_watchlist_{timestamp}.txt"
+        filename = self.config["ioc_dir"] / f"ioc_watchlist_{timestamp}.txt"
         
         with open(filename, "w") as f:
             f.write(f"# IOC Watchlist — {timestamp}\n")
@@ -404,7 +410,7 @@ Keep it concise, actionable, and focused on what matters for security operations
     def save_briefing(self, briefing):
         """Save briefing to file"""
         timestamp = datetime.now().strftime("%Y-%m-%d")
-        filename = self.config["output_dir"] / f"briefing_{timestamp}.md"
+        filename = self.config["briefing_dir"] / f"briefing_{timestamp}.md"
         
         with open(filename, "w") as f:
             f.write(f"# Cybersecurity Daily Briefing\n")
@@ -516,7 +522,8 @@ Keep it concise, actionable, and focused on what matters for security operations
         self.save_ioc_report()
         
         print(f"\n✅ Done! Your briefing is ready.")
-        print(f"📁 All briefings are saved in: {self.config['output_dir']}")
+        print(f"📁 Briefings: {self.config['briefing_dir']}")
+        print(f"📁 IOC watchlists: {self.config['ioc_dir']}")
 
 
 def main():

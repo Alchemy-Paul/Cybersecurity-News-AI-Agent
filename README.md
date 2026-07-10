@@ -12,7 +12,8 @@ An AI-powered SOC briefing agent that automatically fetches cybersecurity news, 
 - **CVE Detection from headlines** using regex extraction of CVE IDs
 - **IOC Extraction** from story titles and URLs with domain, IP, hash, and CVE detection
 - **NVD/CVSS Enrichment** to fetch severity scores and tag critical vulnerabilities
-- **Automatic Archiving** of daily briefings
+- **Automatic Archiving** of daily briefings and IOC watchlists
+- **Structured Output** into `output/briefings` and `output/ioc_watchlists`
 - **Scheduled Execution** via systemd or cron
 - **Executive Summaries** tailored for security operations
 
