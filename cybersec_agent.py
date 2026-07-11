@@ -12,7 +12,7 @@ import html
 import re
 import requests
 import feedparser
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from email.utils import parsedate_to_datetime
 from pathlib import Path
 
@@ -181,21 +181,23 @@ class CybersecNewsAgent:
 
     def parse_date(self, date_value):
         if isinstance(date_value, datetime):
-            return date_value
+            return date_value if date_value.tzinfo else date_value.replace(tzinfo=timezone.utc)
         if isinstance(date_value, (int, float)):
-            return datetime.fromtimestamp(date_value)
+            return datetime.fromtimestamp(date_value, tz=timezone.utc)
         if not date_value:
-            return datetime.now()
+            return datetime.now(tz=timezone.utc)
         if isinstance(date_value, str):
             try:
-                return datetime.fromisoformat(date_value.replace("Z", "+00:00"))
+                parsed = datetime.fromisoformat(date_value.replace("Z", "+00:00"))
+                return parsed if parsed.tzinfo else parsed.replace(tzinfo=timezone.utc)
             except Exception:
                 pass
             try:
-                return parsedate_to_datetime(date_value)
+                parsed = parsedate_to_datetime(date_value)
+                return parsed if parsed.tzinfo else parsed.replace(tzinfo=timezone.utc)
             except Exception:
                 pass
-        return datetime.now()
+        return datetime.now(tz=timezone.utc)
 
     def normalize_story(self, story):
         story.setdefault("points", 0)
