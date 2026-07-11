@@ -8,9 +8,12 @@ Perfect for busy SOC analysts
 import os
 import sys
 import json
+import html
+import re
 import requests
 import feedparser
 from datetime import datetime, timedelta
+from email.utils import parsedate_to_datetime
 from pathlib import Path
 
 
@@ -135,18 +138,100 @@ class CybersecNewsAgent:
             import feedparser
             feed = feedparser.parse(source["url"])
             
-            for entry in feed.entries[:10]:
+            for entry in feed.entries[:12]:
                 self.stories.append({
                     "title": entry.get("title", ""),
                     "url": entry.get("link", ""),
                     "source": source["name"],
                     "points": 0,
                     "comments": 0,
-                    "created": entry.get("published", "")
+                    "created": entry.get("published", ""),
+                    "summary": entry.get("summary", "")
                 })
         except Exception as e:
             print(f"Error fetching {source['name']}: {e}")
-    
+
+    def fetch_story_summary(self, url):
+        """Fetch a short article summary from the page for richer briefing context."""
+        if not url or url.startswith("https://news.ycombinator.com"):
+            return ""
+        headers = {"User-Agent": "CybersecNewsAgent/1.0"}
+        try:
+            response = requests.get(url, headers=headers, timeout=10)
+            html_text = response.text
+            for pattern in [
+                r'<meta[^>]+name=["\']description["\'][^>]+content=["\']([^"\']+)["\']',
+                r'<meta[^>]+property=["\']og:description["\'][^>]+content=["\']([^"\']+)["\']',
+                r'<meta[^>]+name=["\']twitter:description["\'][^>]+content=["\']([^"\']+)["\']'
+            ]:
+                match = re.search(pattern, html_text, re.IGNORECASE)
+                if match:
+                    summary = html.unescape(match.group(1)).strip()
+                    if summary:
+                        return summary.replace("\n", " ").strip()[:320]
+            match = re.search(r"<p[^>]*>(.*?)</p>", html_text, re.IGNORECASE | re.DOTALL)
+            if match:
+                summary = re.sub(r"<[^>]+>", "", match.group(1))
+                summary = html.unescape(summary).strip().replace("\n", " ")
+                if summary:
+                    return summary[:320]
+        except Exception:
+            pass
+        return ""
+
+    def parse_date(self, date_value):
+        if isinstance(date_value, datetime):
+            return date_value
+        if isinstance(date_value, (int, float)):
+            return datetime.fromtimestamp(date_value)
+        if not date_value:
+            return datetime.now()
+        if isinstance(date_value, str):
+            try:
+                return datetime.fromisoformat(date_value.replace("Z", "+00:00"))
+            except Exception:
+                pass
+            try:
+                return parsedate_to_datetime(date_value)
+            except Exception:
+                pass
+        return datetime.now()
+
+    def normalize_story(self, story):
+        story.setdefault("points", 0)
+        story.setdefault("comments", 0)
+        story.setdefault("source", "Unknown")
+        story.setdefault("title", "")
+        story.setdefault("url", "")
+        story.setdefault("created", "")
+        story.setdefault("summary", "")
+
+        published = self.parse_date(story.get("created") or story.get("published") or story.get("updated"))
+        story["published"] = published.isoformat()
+        story["age_hours"] = max(0.0, (datetime.now() - published).total_seconds() / 3600)
+        if not story["summary"]:
+            story["summary"] = self.fetch_story_summary(story["url"])
+        story["key_phrases"] = [kw for kw in self.config["keywords_priority"] if kw.lower() in story["title"].lower() or kw.lower() in story["summary"].lower()]
+        story["priority_score"] = story.get("points", 0)
+
+    def deduplicate_stories(self):
+        unique = {}
+        for story in self.stories:
+            key = (story.get("url") or story.get("title", "")).strip().lower()
+            if not key:
+                continue
+            existing = unique.get(key)
+            if existing:
+                if story.get("points", 0) > existing.get("points", 0):
+                    unique[key] = story
+            else:
+                unique[key] = story
+
+        duplicates = len(self.stories) - len(unique)
+        if duplicates > 0:
+            print(f"🔁 Removed {duplicates} duplicate stories")
+        self.stories = list(unique.values())
+
     def fetch_all_news(self):
         """Fetch news from all configured sources"""
         print("🔍 Fetching latest cybersecurity news...")
@@ -157,23 +242,33 @@ class CybersecNewsAgent:
             elif source["type"] == "rss":
                 self.fetch_rss(source)
         
-        # Sort by relevance (points/score)
+        self.deduplicate_stories()
+        for story in self.stories:
+            self.normalize_story(story)
+
+        # Sort by relevance (initial points) before deeper prioritization
         self.stories.sort(key=lambda x: x.get("points", 0), reverse=True)
         print(f"✅ Found {len(self.stories)} stories")
     
     def prioritize_stories(self):
-        """Score stories based on priority keywords"""
+        """Score stories based on relevance, recency, CVEs, and priority keywords."""
         for story in self.stories:
             score = story.get("points", 0)
             title_lower = story["title"].lower()
-            
-            # Boost score for priority keywords
+            summary_lower = story.get("summary", "").lower()
+
+            if story.get("cves"):
+                score += 120
+            age_bonus = max(0.0, 48.0 - story.get("age_hours", 0.0))
+            score += age_bonus * 2
+
             for keyword in self.config["keywords_priority"]:
-                if keyword.lower() in title_lower:
+                if keyword.lower() in title_lower or keyword.lower() in summary_lower:
                     score += 50
-            
+
+            score += len(story.get("key_phrases", [])) * 15
             story["priority_score"] = score
-        
+
         self.stories.sort(key=lambda x: x["priority_score"], reverse=True)
     
     def generate_ai_briefing(self):
@@ -185,28 +280,30 @@ class CybersecNewsAgent:
         
         print("🤖 Generating AI-powered briefing with Groq...")
         
-        # Prepare top stories
-        top_stories = self.stories[:20]
+        # Prepare top stories with summaries and CVE details for a richer briefing prompt
+        top_stories = self.stories[:12]
         stories_text = "\n\n".join([
             f"{i+1}. {story['title']}\n"
-            f"Source: {story['source']} | Points: {story['points']} | Comments: {story['comments']}\n"
+            f"Source: {story['source']} | Points: {story['points']} | Comments: {story['comments']} | Age: {story['age_hours']:.1f}h\n"
+            f"Summary: {story['summary'] or 'No summary available.'}\n"
             f"CVEs: {', '.join([c['id'] + ' ' + (c['tag'] or 'UNKNOWN') for c in story.get('cves', [])]) or 'None detected'}\n"
             f"URL: {story['url']}"
             for i, story in enumerate(top_stories)
         ])
-        
-        prompt = f"""You are a cybersecurity analyst assistant. Analyze these news stories and create a concise daily briefing for a SOC analyst.
+
+        prompt = f"""You are a cybersecurity analyst assistant supporting a SOC team.
+Analyze these cybersecurity news stories and produce a concise daily briefing with the following sections:
+1. EXECUTIVE SUMMARY
+2. CRITICAL HIGHLIGHTS (top 3-5 stories and why they matter)
+3. CVE ALERTS (critical/high vulnerabilities and any impacted assets)
+4. TRENDING THEMES (threat vectors, malware, actors, ransomware, phishing, supply chain, etc.)
+5. RECOMMENDED ACTIONS (immediate SOC actions, detection, and mitigation guidance)
+
+Keep the briefing short, actionable, and SOC-focused. Use bullet points and clear headings.
 
 Today's Cybersecurity News Stories:
 {stories_text}
-
-Please provide:
-1. EXECUTIVE SUMMARY (2-3 sentences on the overall threat landscape today)
-2. CRITICAL ITEMS (Top 3-5 most important stories for a SOC analyst, with brief explanation of why they matter)
-3. TRENDING TOPICS (What themes are emerging?)
-4. RECOMMENDED ACTIONS (Any immediate steps a SOC analyst should consider based on today's news)
-
-Keep it concise, actionable, and focused on what matters for security operations."""
+"""
 
         try:
             # Allow configuring model and endpoint via environment if needed
