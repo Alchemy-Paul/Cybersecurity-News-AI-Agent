@@ -210,7 +210,7 @@ class CybersecNewsAgent:
 
         published = self.parse_date(story.get("created") or story.get("published") or story.get("updated"))
         story["published"] = published.isoformat()
-        story["age_hours"] = max(0.0, (datetime.now() - published).total_seconds() / 3600)
+        story["age_hours"] = max(0.0, (datetime.now(tz=timezone.utc) - published).total_seconds() / 3600)
         if not story["summary"]:
             story["summary"] = self.fetch_story_summary(story["url"])
         story["key_phrases"] = [kw for kw in self.config["keywords_priority"] if kw.lower() in story["title"].lower() or kw.lower() in story["summary"].lower()]
