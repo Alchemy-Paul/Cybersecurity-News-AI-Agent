@@ -52,10 +52,14 @@ nano .env  # Add your Groq API key and Slack webhook URL
 ```bash
 python3 -m venv .venv
 source .venv/bin/activate
+```
+
+4. **Install dependencies:**
+```bash
 pip install -r requirements.txt
 ```
 
-4. **Test the agent:**
+5. **Test the agent:**
 ```bash
 .venv/bin/python cybersec_agent.py
 ```
