@@ -88,6 +88,7 @@ class CybersecNewsAgent:
     def __init__(self):
         self.config = CONFIG
         self.stories = []
+        self.iocs = {}
         self.config["output_dir"].mkdir(parents=True, exist_ok=True)
         self.config["briefing_dir"] = self.config["output_dir"] / "briefings"
         self.config["ioc_dir"] = self.config["output_dir"] / "ioc_watchlists"
@@ -135,8 +136,11 @@ class CybersecNewsAgent:
     def fetch_rss(self, source):
         """Fetch stories from RSS feeds"""
         try:
+            response = requests.get(source["url"], timeout=10, headers={"User-Agent": "CybersecNewsAgent/1.0"})
+            response.raise_for_status()
+
             import feedparser
-            feed = feedparser.parse(source["url"])
+            feed = feedparser.parse(response.content)
             
             for entry in feed.entries[:12]:
                 self.stories.append({
