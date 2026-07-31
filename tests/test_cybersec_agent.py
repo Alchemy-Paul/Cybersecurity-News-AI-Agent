@@ -40,6 +40,40 @@ class CybersecAgentTests(unittest.TestCase):
         self.assertIn("RECOMMENDED ACTIONS", prompt)
         self.assertIn("CVE-2026-12345", prompt)
 
+    def test_score_story_relevance_increases_for_cve_and_engagement(self):
+        base_story = {
+            "title": "Routine update",
+            "summary": "A standard patch was released.",
+            "points": 15,
+            "comments": 4,
+            "source": "Example Feed",
+        }
+        cve_story = {
+            "title": "Critical RCE in VPN appliance",
+            "summary": "A severe vulnerability affects enterprise VPN appliances.",
+            "points": 50,
+            "comments": 20,
+            "source": "Example Feed",
+            "cves": [{"id": "CVE-2026-12345", "tag": "🔴 CRITICAL"}],
+        }
+
+        base_score = self.agent.score_story_relevance(base_story)
+        cve_score = self.agent.score_story_relevance(cve_story)
+
+        self.assertGreater(cve_score, base_score)
+        self.assertIn("cve", self.agent.score_story_relevance(cve_story, return_reasons=True).lower())
+
+    def test_enrich_cve_entry_uses_fallback_for_unknown_cve(self):
+        enriched = self.agent.enrich_cve_entry(
+            "CVE-9999-99999",
+            title="Critical auth bypass in VPN",
+            summary="A security issue allows attackers to bypass login controls.",
+        )
+
+        self.assertEqual(enriched["tag"], "🔴 CRITICAL")
+        self.assertEqual(enriched["severity"], "critical")
+        self.assertIn("auth bypass", enriched["summary"].lower())
+
 
 if __name__ == "__main__":
     unittest.main()
