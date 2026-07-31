@@ -2,20 +2,21 @@ Cybersecurity News AI Agent
 
 I got tired of spending 30 minutes every morning sifting through security blogs just to stay updated on threats. So I built this.
 
-An AI-powered SOC briefing agent that automatically fetches cybersecurity news, scores CVE severity, and delivers a daily threat digest to Slack so you can focus on defending, not reading.
+An AI-powered SOC briefing agent that automatically fetches cybersecurity news, scores CVE severity, extracts IOCs, and delivers a daily threat digest to Slack, email, or Discord so you can focus on defending, not reading.
 
 ## Features
 
-- **AI-Powered Analysis** using Groq
-- **Multi-Source Aggregation**  (Hacker News, BleepingComputer, The Hacker News, Cybersecurity News, and Securelist RSS feeds)
-- **Smart Prioritization** based on SOC-relevant keywords
-- **CVE Detection from headlines** using regex extraction of CVE IDs
-- **IOC Extraction** from story titles and URLs with domain, IP, hash, and CVE detection
-- **NVD/CVSS Enrichment** to fetch severity scores and tag critical vulnerabilities
-- **Automatic Archiving** of daily briefings and IOC watchlists
-- **Structured Output** into `output/briefings` and `output/ioc_watchlists`
-- **Scheduled Execution** via systemd or cron
-- **Executive Summaries** tailored for security operations
+- **AI-powered analysis** using Groq with fallback basic briefing when AI is disabled or unavailable
+- **Multi-source aggregation** from Hacker News security searches and RSS feeds (Cybersecurity News, The Hacker News, BleepingComputer, Securelist)
+- **Smart prioritization** based on SOC-relevant keywords, recency, and CVE severity
+- **CVE detection** from headlines and automatic NVD/CVSS severity enrichment
+- **IOC extraction** for domains, IPv4 addresses, MD5, SHA256, and CVE IDs
+- **Email and Discord delivery support** via SMTP and Discord webhook
+- **Slack delivery** via Slack webhook
+- **Automatic archiving** of daily markdown and HTML briefings
+- **Structured output** into `output/briefings` and `output/ioc_watchlists`
+- **Scheduler support** with sample systemd and cron configuration files
+- **Configurable runtime options** including `--output-dir`, `--max-stories`, `--no-slack`, `--no-save`, `--print-only`, and `--no-ai`
 
 ## Screenshots
 
@@ -29,24 +30,31 @@ An AI-powered SOC briefing agent that automatically fetches cybersecurity news, 
 
 ### Prerequisites
 
-- Pop!_OS 24.04 (or any Debian/Ubuntu-based Linux) - my setup
+- Linux / Debian/Ubuntu-based system
 - Python 3.8+
 - Internet connection
-- Groq API key (optional but recommended)
+- Groq API key for AI-generated briefings (optional)
+- Slack webhook URL for Slack delivery (optional)
 
 ### Installation
 
 1. **Clone the repository:**
 ```bash
-git clone https://github.com/Alchemy-Paul/Cybersecurity-News-AI-Agent.git
-cd Cybersecurity-News-AI-Agent
+git clone https://github.com/Alchemy-Paul/Cybersecurity-News-AI-Agent.git cybersec-agent
+cd cybersec-agent
 ```
 
 2. **Configure your environment:**
 ```bash
 cp .env.example .env
-nano .env  # Add your Groq API key and Slack webhook URL
+nano .env
 ```
+Add the following values as needed:
+- `GROQ_API_KEY`
+- `SLACK_WEBHOOK_URL`
+- `OUTPUT_DIR` (optional)
+- `SMTP_HOST`, `SMTP_PORT`, `SMTP_USER`, `SMTP_PASSWORD`, `SMTP_FROM`, `SMTP_TO` (optional)
+- `DISCORD_WEBHOOK_URL` (optional)
 
 3. **Create and activate a virtual environment:**
 ```bash
@@ -59,19 +67,57 @@ source .venv/bin/activate
 pip install -r requirements.txt
 ```
 
-5. **Test the agent:**
+5. **Run the agent:**
 ```bash
 .venv/bin/python cybersec_agent.py
 ```
 
-### Useful runtime options
+### Optional scheduler generation
+
+Set `GENERATE_SCHEDULER_FILES=1` and run the script to create sample scheduler files:
+```bash
+GENERATE_SCHEDULER_FILES=1 .venv/bin/python cybersec_agent.py
+```
+This generates `systemd/cybersec-agent.service` and `cybersec-agent.cron` in the configured output directory.
+
+## Runtime options
 
 ```bash
-.venv/bin/python cybersec_agent.py --max-stories 8
+.venv/bin/python cybersec_agent.py --output-dir output --max-stories 8
 .venv/bin/python cybersec_agent.py --no-slack
 .venv/bin/python cybersec_agent.py --no-save
 .venv/bin/python cybersec_agent.py --print-only
 .venv/bin/python cybersec_agent.py --no-ai
 ```
 
-These options make it easier to run the agent locally for testing, preview output without writing files, or skip Slack delivery when you only want a local briefing.
+- `--output-dir`: Choose a custom output directory (default is `output/`)
+- `--max-stories`: Limit the number of stories included in the briefing
+- `--no-slack`: Skip sending the briefing to Slack
+- `--no-save`: Skip saving briefing and IOC files to disk
+- `--print-only`: Display the briefing in the terminal only; disables Slack send and saving
+- `--no-ai`: Skip Groq AI generation and use the basic briefing instead
+
+## Output
+
+- Markdown briefings are saved to `output/briefings`
+- HTML briefings are saved to `output/briefings`
+- IOC watchlists are saved to `output/ioc_watchlists`
+
+## Environment variables
+
+Supported environment variables:
+
+- `GROQ_API_KEY`
+- `SLACK_WEBHOOK_URL`
+- `OUTPUT_DIR`
+- `SMTP_HOST`
+- `SMTP_PORT`
+- `SMTP_USER`
+- `SMTP_PASSWORD`
+- `SMTP_FROM`
+- `SMTP_TO`
+- `DISCORD_WEBHOOK_URL`
+- `CRON_SCHEDULE`
+- `GENERATE_SCHEDULER_FILES`
+
+These drive output location, delivery channels, and scheduler generation.
