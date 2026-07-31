@@ -5,11 +5,12 @@ Fetches and summarizes the latest cybersecurity news, vulnerabilities, and threa
 Perfect for busy SOC analysts
 """
 
+import argparse
+import html
 import os
+import re
 import sys
 import json
-import html
-import re
 import requests
 import feedparser
 from datetime import datetime, timedelta, timezone
@@ -90,10 +91,15 @@ class CybersecNewsAgent:
         self.stories = []
         self.iocs = {}
         self.config["output_dir"].mkdir(parents=True, exist_ok=True)
+        self.config["output_dir"] = Path(self.config["output_dir"]).resolve()
         self.config["briefing_dir"] = self.config["output_dir"] / "briefings"
         self.config["ioc_dir"] = self.config["output_dir"] / "ioc_watchlists"
         self.config["briefing_dir"].mkdir(parents=True, exist_ok=True)
         self.config["ioc_dir"].mkdir(parents=True, exist_ok=True)
+        self.config.setdefault("max_story_count", int(os.getenv("MAX_STORY_COUNT", "12")))
+        self.config.setdefault("send_to_slack", bool(os.getenv("SLACK_WEBHOOK_URL", "")))
+        self.config.setdefault("save_outputs", True)
+        self.config.setdefault("use_ai", True)
         
     def fetch_hackernews(self, source):
         """Fetch stories from Hacker News API"""
@@ -203,6 +209,58 @@ class CybersecNewsAgent:
                 pass
         return datetime.now(tz=timezone.utc)
 
+    def sanitize_text(self, text, max_length=0):
+        if not text:
+            return ""
+
+        cleaned = re.sub(r"<[^>]+>", " ", str(text))
+        cleaned = html.unescape(cleaned)
+        cleaned = re.sub(r"\s+", " ", cleaned).strip()
+
+        if max_length and len(cleaned) > max_length:
+            cleaned = cleaned[: max_length].rstrip()
+            if cleaned:
+                cleaned = cleaned.rstrip(".,;:!? ") + "…"
+
+        return cleaned
+
+    def build_briefing_prompt(self, stories=None):
+        stories = stories or self.stories[: self.config.get("max_story_count", 12)]
+        stories_text = "\n\n".join([
+            self.format_story_for_prompt(i + 1, story)
+            for i, story in enumerate(stories)
+        ])
+
+        return f"""You are a cybersecurity analyst assistant supporting a SOC team.
+Analyze these cybersecurity news stories and produce a concise daily briefing with the following sections:
+1. EXECUTIVE SUMMARY
+2. CRITICAL HIGHLIGHTS (top 3-5 stories and why they matter)
+3. CVE ALERTS (critical/high vulnerabilities and any impacted assets)
+4. TRENDING THEMES (threat vectors, malware, actors, ransomware, phishing, supply chain, etc.)
+5. RECOMMENDED ACTIONS (immediate SOC actions, detection, and mitigation guidance)
+
+Keep the briefing short, actionable, and SOC-focused. Use bullet points and clear headings.
+
+Today's Cybersecurity News Stories:
+{stories_text}
+"""
+
+    def format_story_for_prompt(self, index, story):
+        title = self.sanitize_text(story.get("title", ""), max_length=180)
+        summary = self.sanitize_text(story.get("summary", ""), max_length=320)
+        cves = story.get("cves", [])
+        cve_text = ", ".join([f"{c['id']} {c.get('tag', 'UNKNOWN')}" for c in cves]) or "None detected"
+
+        return (
+            f"{index}. {title}\n"
+            f"Source: {self.sanitize_text(story.get('source', 'Unknown'))} | "
+            f"Points: {story.get('points', 0)} | Comments: {story.get('comments', 0)} | "
+            f"Age: {story.get('age_hours', 0):.1f}h\n"
+            f"Summary: {summary or 'No summary available.'}\n"
+            f"CVEs: {cve_text}\n"
+            f"URL: {story.get('url', '')}"
+        )
+
     def normalize_story(self, story):
         story.setdefault("points", 0)
         story.setdefault("comments", 0)
@@ -212,11 +270,15 @@ class CybersecNewsAgent:
         story.setdefault("created", "")
         story.setdefault("summary", "")
 
+        story["title"] = self.sanitize_text(story.get("title", ""), max_length=220)
+        story["summary"] = self.sanitize_text(story.get("summary", ""), max_length=360)
+
         published = self.parse_date(story.get("created") or story.get("published") or story.get("updated"))
         story["published"] = published.isoformat()
         story["age_hours"] = max(0.0, (datetime.now(tz=timezone.utc) - published).total_seconds() / 3600)
         if not story["summary"]:
             story["summary"] = self.fetch_story_summary(story["url"])
+            story["summary"] = self.sanitize_text(story["summary"], max_length=360)
         story["key_phrases"] = [kw for kw in self.config["keywords_priority"] if kw.lower() in story["title"].lower() or kw.lower() in story["summary"].lower()]
         story["priority_score"] = story.get("points", 0)
 
@@ -284,32 +346,13 @@ class CybersecNewsAgent:
             print("⚠️  No Groq API key found. Set GROQ_API_KEY environment variable.")
             return self.generate_basic_briefing()
         
+        if not self.config.get("use_ai", True):
+            print("⚠️  AI generation disabled. Falling back to basic briefing.")
+            return self.generate_basic_briefing()
+
         print("🤖 Generating AI-powered briefing with Groq...")
-        
-        # Prepare top stories with summaries and CVE details for a richer briefing prompt
-        top_stories = self.stories[:12]
-        stories_text = "\n\n".join([
-            f"{i+1}. {story['title']}\n"
-            f"Source: {story['source']} | Points: {story['points']} | Comments: {story['comments']} | Age: {story['age_hours']:.1f}h\n"
-            f"Summary: {story['summary'] or 'No summary available.'}\n"
-            f"CVEs: {', '.join([c['id'] + ' ' + (c['tag'] or 'UNKNOWN') for c in story.get('cves', [])]) or 'None detected'}\n"
-            f"URL: {story['url']}"
-            for i, story in enumerate(top_stories)
-        ])
 
-        prompt = f"""You are a cybersecurity analyst assistant supporting a SOC team.
-Analyze these cybersecurity news stories and produce a concise daily briefing with the following sections:
-1. EXECUTIVE SUMMARY
-2. CRITICAL HIGHLIGHTS (top 3-5 stories and why they matter)
-3. CVE ALERTS (critical/high vulnerabilities and any impacted assets)
-4. TRENDING THEMES (threat vectors, malware, actors, ransomware, phishing, supply chain, etc.)
-5. RECOMMENDED ACTIONS (immediate SOC actions, detection, and mitigation guidance)
-
-Keep the briefing short, actionable, and SOC-focused. Use bullet points and clear headings.
-
-Today's Cybersecurity News Stories:
-{stories_text}
-"""
+        prompt = self.build_briefing_prompt(self.stories[: self.config.get("max_story_count", 12)])
 
         try:
             # Allow configuring model and endpoint via environment if needed
@@ -616,21 +659,42 @@ Today's Cybersecurity News Stories:
 
         # Display
         self.display_briefing(briefing)
-        
+
         # Send to Slack
-        self.send_to_slack(briefing)
-        
+        if self.config.get("send_to_slack", True):
+            self.send_to_slack(briefing)
+
         # Save
-        filepath = self.save_briefing(briefing)
-        self.save_ioc_report()
+        if self.config.get("save_outputs", True):
+            filepath = self.save_briefing(briefing)
+            self.save_ioc_report()
         
         print(f"\n✅ Done! Your briefing is ready.")
         print(f"📁 Briefings: {self.config['briefing_dir']}")
         print(f"📁 IOC watchlists: {self.config['ioc_dir']}")
 
 
+def parse_args():
+    parser = argparse.ArgumentParser(description="Fetch and summarize cybersecurity news")
+    parser.add_argument("--output-dir", default=os.getenv("OUTPUT_DIR", str(DEFAULT_OUTPUT_DIR)), help="Directory for generated briefings and IOC watchlists")
+    parser.add_argument("--no-slack", action="store_true", help="Skip sending the briefing to Slack")
+    parser.add_argument("--no-save", action="store_true", help="Skip saving the briefing and IOC report to disk")
+    parser.add_argument("--max-stories", type=int, default=int(os.getenv("MAX_STORY_COUNT", "12")), help="Maximum number of stories to include in the briefing")
+    parser.add_argument("--no-ai", action="store_true", help="Disable Groq AI generation and use the basic briefing")
+    parser.add_argument("--print-only", action="store_true", help="Display the briefing without saving or sending it")
+    return parser.parse_args()
+
+
 def main():
     """Entry point"""
+    args = parse_args()
+
+    CONFIG["output_dir"] = Path(args.output_dir).resolve()
+    CONFIG["max_story_count"] = args.max_stories
+    CONFIG["send_to_slack"] = not args.no_slack and not args.print_only
+    CONFIG["save_outputs"] = not args.no_save and not args.print_only
+    CONFIG["use_ai"] = not args.no_ai
+
     agent = CybersecNewsAgent()
     agent.run()
 
