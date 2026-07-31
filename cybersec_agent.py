@@ -9,11 +9,13 @@ import argparse
 import html
 import os
 import re
+import smtplib
 import sys
 import json
 import requests
 import feedparser
 from datetime import datetime, timedelta, timezone
+from email.message import EmailMessage
 from email.utils import parsedate_to_datetime
 from pathlib import Path
 
@@ -82,7 +84,14 @@ CONFIG = {
         "SIEM", "SOC", "incident response", "threat intelligence"
     ],
     "output_dir": Path(os.getenv("OUTPUT_DIR", str(DEFAULT_OUTPUT_DIR))),
-    "slack_webhook_url": os.getenv("SLACK_WEBHOOK_URL", "")
+    "slack_webhook_url": os.getenv("SLACK_WEBHOOK_URL", ""),
+    "smtp_host": os.getenv("SMTP_HOST", ""),
+    "smtp_port": int(os.getenv("SMTP_PORT", "587")),
+    "smtp_user": os.getenv("SMTP_USER", ""),
+    "smtp_password": os.getenv("SMTP_PASSWORD", ""),
+    "smtp_from": os.getenv("SMTP_FROM", ""),
+    "smtp_to": os.getenv("SMTP_TO", ""),
+    "discord_webhook_url": os.getenv("DISCORD_WEBHOOK_URL", "")
 }
 
 class CybersecNewsAgent:
@@ -326,24 +335,64 @@ Today's Cybersecurity News Stories:
         self.stories.sort(key=lambda x: x.get("points", 0), reverse=True)
         print(f"✅ Found {len(self.stories)} stories")
     
+    def score_story_relevance(self, story, return_reasons=False):
+        """Score stories based on engagement, recency, CVEs, severity, and keyword relevance."""
+        title_lower = (story.get("title", "") or "").lower()
+        summary_lower = (story.get("summary", "") or "").lower()
+        score = int(story.get("points", 0)) * 1.5 + int(story.get("comments", 0)) * 0.8
+        reasons = []
+
+        if story.get("cves"):
+            score += 140
+            reasons.append("cve")
+
+        if any(keyword.lower() in title_lower or keyword.lower() in summary_lower for keyword in self.config["keywords_priority"]):
+            keyword_hits = sum(1 for keyword in self.config["keywords_priority"] if keyword.lower() in title_lower or keyword.lower() in summary_lower)
+            score += keyword_hits * 18
+            reasons.append("keyword")
+
+        if "ransomware" in title_lower or "ransomware" in summary_lower:
+            score += 60
+            reasons.append("ransomware")
+
+        if "phishing" in title_lower or "phishing" in summary_lower:
+            score += 40
+            reasons.append("phishing")
+
+        if "zero-day" in title_lower or "zero-day" in summary_lower:
+            score += 70
+            reasons.append("zero-day")
+
+        if "breach" in title_lower or "breach" in summary_lower:
+            score += 30
+            reasons.append("breach")
+
+        age_hours = float(story.get("age_hours", 0.0) or 0.0)
+        age_bonus = max(0.0, 48.0 - age_hours)
+        score += age_bonus * 2.2
+        if age_hours <= 24:
+            reasons.append("fresh")
+
+        for cve in story.get("cves", []):
+            tag = (cve.get("tag") or "").lower()
+            if "critical" in tag:
+                score += 80
+                reasons.append("critical-cve")
+            elif "high" in tag:
+                score += 50
+                reasons.append("high-cve")
+
+        score += len(story.get("key_phrases", [])) * 12
+        story["priority_score"] = round(score, 2)
+
+        if return_reasons:
+            return story["priority_score"], reasons
+        return story["priority_score"]
+
     def prioritize_stories(self):
         """Score stories based on relevance, recency, CVEs, and priority keywords."""
         for story in self.stories:
-            score = story.get("points", 0)
-            title_lower = story["title"].lower()
-            summary_lower = story.get("summary", "").lower()
-
-            if story.get("cves"):
-                score += 120
-            age_bonus = max(0.0, 48.0 - story.get("age_hours", 0.0))
-            score += age_bonus * 2
-
-            for keyword in self.config["keywords_priority"]:
-                if keyword.lower() in title_lower or keyword.lower() in summary_lower:
-                    score += 50
-
-            score += len(story.get("key_phrases", [])) * 15
-            story["priority_score"] = score
+            self.score_story_relevance(story)
 
         self.stories.sort(key=lambda x: x["priority_score"], reverse=True)
     
@@ -486,6 +535,39 @@ Today's Cybersecurity News Stories:
         print(f"💾 IOC watchlist saved to: {filename}")
         return filename
 
+    def enrich_cve_entry(self, cve_id, title="", summary=""):
+        """Fetch CVE details from NVD when available, otherwise use heuristic fallback."""
+        score, tag = self.get_cve_severity(cve_id)
+        if score is None and tag is None:
+            title_lower = (title or "").lower()
+            summary_lower = (summary or "").lower()
+            text = f"{title_lower} {summary_lower}"
+
+            if any(keyword in text for keyword in ["critical", "rce", "auth bypass", "privilege", "zero-day", "remote code execution"]):
+                tag = "🔴 CRITICAL"
+                score = 9.8
+            elif any(keyword in text for keyword in ["high", "vulnerability", "bypass", "exploit"]):
+                tag = "🟠 HIGH"
+                score = 7.8
+            elif any(keyword in text for keyword in ["medium", "denial", "spoofing"]):
+                tag = "🟡 MEDIUM"
+                score = 5.5
+            else:
+                tag = "🟢 LOW"
+                score = 3.2
+
+        severity = "unknown"
+        if tag:
+            severity = "critical" if "critical" in tag.lower() else "high" if "high" in tag.lower() else "medium" if "medium" in tag.lower() else "low"
+
+        return {
+            "id": cve_id.upper(),
+            "score": score,
+            "tag": tag,
+            "severity": severity,
+            "summary": self.sanitize_text(summary, max_length=280) or self.sanitize_text(title, max_length=280),
+        }
+
     def get_cve_severity(self, cve_id):
         """Fetch CVE severity from NVD API"""
         try:
@@ -497,8 +579,7 @@ Today's Cybersecurity News Stories:
                 if vulnerabilities:
                     cve_data = vulnerabilities[0].get("cve", {})
                     metrics = cve_data.get("metrics", {})
-                    
-                    # Try CVSSv3 first, then CVSSv2
+
                     if metrics.get("cvssMetricV31"):
                         score = metrics["cvssMetricV31"][0]["cvssData"]["baseScore"]
                     elif metrics.get("cvssMetricV30"):
@@ -507,8 +588,7 @@ Today's Cybersecurity News Stories:
                         score = metrics["cvssMetricV2"][0]["cvssData"]["baseScore"]
                     else:
                         return None, None
-                    
-                    # Tag by severity
+
                     if score >= 9.0:
                         tag = "🔴 CRITICAL"
                     elif score >= 7.0:
@@ -517,7 +597,7 @@ Today's Cybersecurity News Stories:
                         tag = "🟡 MEDIUM"
                     else:
                         tag = "🟢 LOW"
-                    
+
                     return score, tag
         except Exception as e:
             print(f"⚠️  Could not fetch severity for {cve_id}: {e}")
@@ -534,18 +614,14 @@ Today's Cybersecurity News Stories:
             cves = cve_pattern.findall(story["title"])
             if cves:
                 story["cves"] = []
-                for cve_id in set(cves):  # deduplicate
+                for cve_id in set(cves):
                     cve_id = cve_id.upper()
-                    score, tag = self.get_cve_severity(cve_id)
-                    story["cves"].append({
-                        "id": cve_id,
-                        "score": score,
-                        "tag": tag
-                    })
-                    if tag:
-                        print(f"  {tag} | {cve_id} (CVSS: {score}) — {story['title'][:60]}...")
+                    enriched = self.enrich_cve_entry(cve_id, title=story.get("title", ""), summary=story.get("summary", ""))
+                    story["cves"].append(enriched)
+                    if enriched.get("tag"):
+                        print(f"  {enriched['tag']} | {enriched['id']} (CVSS: {enriched['score']}) — {story['title'][:60]}...")
                     else:
-                        print(f"  ⚪ UNKNOWN | {cve_id} — {story['title'][:60]}...")
+                        print(f"  ⚪ UNKNOWN | {enriched['id']} — {story['title'][:60]}...")
     
     def generate_basic_briefing(self):
         """Generate a basic briefing without AI"""
@@ -565,15 +641,62 @@ Today's Cybersecurity News Stories:
         """Save briefing to file"""
         timestamp = datetime.now().strftime("%Y-%m-%d")
         filename = self.config["briefing_dir"] / f"briefing_{timestamp}.md"
-        
+
         with open(filename, "w") as f:
             f.write(f"# Cybersecurity Daily Briefing\n")
             f.write(f"**Generated:** {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}\n\n")
             f.write("---\n\n")
             f.write(briefing)
-        
+
         print(f"\n💾 Briefing saved to: {filename}")
         return filename
+
+    def send_to_email(self, briefing):
+        """Send the briefing to an email recipient when configured."""
+        smtp_host = self.config.get("smtp_host", "")
+        smtp_port = int(self.config.get("smtp_port", 587))
+        smtp_user = self.config.get("smtp_user", "")
+        smtp_password = self.config.get("smtp_password", "")
+        smtp_from = self.config.get("smtp_from", "")
+        smtp_to = self.config.get("smtp_to", "")
+
+        if not all([smtp_host, smtp_from, smtp_to]):
+            print("⚠️  Email delivery not configured. Set SMTP_HOST, SMTP_FROM, and SMTP_TO to enable it.")
+            return
+
+        try:
+            msg = EmailMessage()
+            msg["Subject"] = "Cybersecurity Daily Briefing"
+            msg["From"] = smtp_from
+            msg["To"] = smtp_to
+            msg.set_content(briefing)
+
+            with smtplib.SMTP(smtp_host, smtp_port) as server:
+                if smtp_user and smtp_password:
+                    server.starttls()
+                    server.login(smtp_user, smtp_password)
+                server.send_message(msg)
+
+            print("✅ Briefing sent to email successfully!")
+        except Exception as e:
+            print(f"❌ Error sending email: {e}")
+
+    def send_to_discord(self, briefing):
+        """Send the briefing to Discord via webhook when configured."""
+        webhook_url = self.config.get("discord_webhook_url", "")
+        if not webhook_url:
+            print("⚠️  No Discord webhook URL configured. Set DISCORD_WEBHOOK_URL to enable Discord delivery.")
+            return
+
+        try:
+            payload = {"content": briefing[:1900]}
+            response = requests.post(webhook_url, json=payload, timeout=10)
+            if response.status_code in {200, 204}:
+                print("✅ Briefing sent to Discord successfully!")
+            else:
+                print(f"❌ Discord error: {response.status_code} - {response.text}")
+        except Exception as e:
+            print(f"❌ Error sending to Discord: {e}")
 
     def send_to_slack(self, briefing):
         """Send briefing to Slack channel"""
@@ -671,6 +794,10 @@ Today's Cybersecurity News Stories:
         # Send to Slack
         if self.config.get("send_to_slack", True):
             self.send_to_slack(briefing)
+
+        # Send to email/Discord if configured
+        self.send_to_email(briefing)
+        self.send_to_discord(briefing)
 
         # Save
         if self.config.get("save_outputs", True):
