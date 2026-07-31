@@ -80,6 +80,22 @@ GENERATE_SCHEDULER_FILES=1 .venv/bin/python cybersec_agent.py
 ```
 This generates `systemd/cybersec-agent.service` and `cybersec-agent.cron` in the configured output directory.
 
+### Scheduler setup examples
+
+Using systemd:
+```bash
+sudo cp systemd/cybersec-agent.service /etc/systemd/system/
+sudo systemctl daemon-reload
+sudo systemctl enable --now cybersec-agent.service
+```
+
+Using cron:
+```bash
+crontab -e
+# add a line similar to:
+0 8 * * * /home/youruser/cybersec-agent/.venv/bin/python /home/youruser/cybersec-agent/cybersec_agent.py --output-dir /home/youruser/cybersec-agent/output --no-slack > /home/youruser/cybersec-agent/output/cron.log 2>&1
+```
+
 ## Runtime options
 
 ```bash
