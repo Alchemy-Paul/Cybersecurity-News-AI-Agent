@@ -218,9 +218,17 @@ class CybersecNewsAgent:
         cleaned = re.sub(r"\s+", " ", cleaned).strip()
 
         if max_length and len(cleaned) > max_length:
-            cleaned = cleaned[: max_length].rstrip()
-            if cleaned:
-                cleaned = cleaned.rstrip(".,;:!? ") + "…"
+            if len(cleaned) <= max_length + 3:
+                return cleaned
+
+            truncated = cleaned[:max_length].rstrip()
+            if truncated:
+                truncated = truncated.rstrip(".,;:!? ")
+                if " " in truncated:
+                    truncated = truncated.rsplit(" ", 1)[0].rstrip()
+                if truncated and truncated != cleaned:
+                    truncated += "…"
+                cleaned = truncated or cleaned[:max_length].rstrip()
 
         return cleaned
 
