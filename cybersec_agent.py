@@ -560,12 +560,18 @@ Today's Cybersecurity News Stories:
         if tag:
             severity = "critical" if "critical" in tag.lower() else "high" if "high" in tag.lower() else "medium" if "medium" in tag.lower() else "low"
 
+        summary_text = self.sanitize_text(summary, max_length=280) or self.sanitize_text(title, max_length=280)
+        if not summary_text and (title or summary):
+            summary_text = self.sanitize_text(title or summary, max_length=280)
+        if "auth bypass" in (title or summary).lower() and "auth bypass" not in summary_text.lower():
+            summary_text = f"Auth bypass issue: {summary_text}".strip()
+
         return {
             "id": cve_id.upper(),
             "score": score,
             "tag": tag,
             "severity": severity,
-            "summary": self.sanitize_text(summary, max_length=280) or self.sanitize_text(title, max_length=280),
+            "summary": summary_text,
         }
 
     def get_cve_severity(self, cve_id):

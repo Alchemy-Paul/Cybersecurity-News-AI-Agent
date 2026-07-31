@@ -61,7 +61,8 @@ class CybersecAgentTests(unittest.TestCase):
         cve_score = self.agent.score_story_relevance(cve_story)
 
         self.assertGreater(cve_score, base_score)
-        self.assertIn("cve", self.agent.score_story_relevance(cve_story, return_reasons=True).lower())
+        _, reasons = self.agent.score_story_relevance(cve_story, return_reasons=True)
+        self.assertIn("cve", reasons)
 
     def test_enrich_cve_entry_uses_fallback_for_unknown_cve(self):
         enriched = self.agent.enrich_cve_entry(
