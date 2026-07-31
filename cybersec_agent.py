@@ -638,6 +638,9 @@ Today's Cybersecurity News Stories:
         
         for i, story in enumerate(self.stories[:10], 1):
             briefing += f"### {i}. {story['title']}\n"
+            summary = self.sanitize_text(story.get("summary", ""), max_length=180)
+            if summary:
+                briefing += f"- **Summary:** {summary}\n"
             briefing += f"- **Source:** {story['source']}\n"
             cve_tags = ", ".join([c.get("tag", "") for c in story.get("cves", []) if c.get("tag")])
             if cve_tags:
