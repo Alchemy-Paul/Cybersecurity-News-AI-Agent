@@ -1,8 +1,6 @@
 Cybersecurity News AI Agent
 
-I got tired of spending 30 minutes every morning sifting through security blogs just to stay updated on threats. So I built this.
-
-An AI-powered SOC briefing agent that automatically fetches cybersecurity news, scores CVE severity, extracts IOCs, and delivers a daily threat digest to Slack, email, or Discord so you can focus on defending, not reading.
+Cybersecurity News AI Agent is an automated security briefing tool designed for SOC analysts and security teams. It collects cybersecurity news from multiple sources, prioritizes the most relevant stories, enriches them with CVE severity context, extracts indicators of compromise, and generates a daily briefing that can be saved locally or shared through Slack, email, or Discord. The project combines news aggregation, threat intelligence enrichment, and automation to help users stay informed with minimal manual effort.
 
 ## Features
 
