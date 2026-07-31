@@ -63,3 +63,15 @@ pip install -r requirements.txt
 ```bash
 .venv/bin/python cybersec_agent.py
 ```
+
+### Useful runtime options
+
+```bash
+.venv/bin/python cybersec_agent.py --max-stories 8
+.venv/bin/python cybersec_agent.py --no-slack
+.venv/bin/python cybersec_agent.py --no-save
+.venv/bin/python cybersec_agent.py --print-only
+.venv/bin/python cybersec_agent.py --no-ai
+```
+
+These options make it easier to run the agent locally for testing, preview output without writing files, or skip Slack delivery when you only want a local briefing.
