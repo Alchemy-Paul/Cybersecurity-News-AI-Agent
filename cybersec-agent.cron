@@ -1,0 +1,1 @@
+0 8 * * * brandogas /usr/bin/python3.12 /home/brandogas/Desktop/cybersec-agent/cybersec_agent.py --output-dir /home/brandogas/Desktop/cybersec-agent --no-slack > /home/brandogas/Desktop/cybersec-agent/cron.log 2>&1

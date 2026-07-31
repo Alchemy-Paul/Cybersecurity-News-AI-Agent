@@ -1,0 +1,14 @@
+[Unit]
+Description=Cybersecurity Daily Briefing Agent
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+WorkingDirectory=/home/brandogas/Desktop/cybersec-agent
+ExecStart=/usr/bin/python3.12 /home/brandogas/Desktop/cybersec-agent/cybersec_agent.py --output-dir /home/brandogas/Desktop/cybersec-agent --no-slack
+User=brandogas
+Environment=PYTHONPATH=/home/brandogas/Desktop/cybersec-agent
+
+[Install]
+WantedBy=multi-user.target

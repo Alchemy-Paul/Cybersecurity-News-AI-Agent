@@ -15,6 +15,7 @@ import json
 import requests
 import feedparser
 from datetime import datetime, timedelta, timezone
+from textwrap import dedent
 from email.message import EmailMessage
 from email.utils import parsedate_to_datetime
 from pathlib import Path
@@ -657,6 +658,49 @@ Today's Cybersecurity News Stories:
         print(f"\n💾 Briefing saved to: {filename}")
         return filename
 
+    def save_html_report(self, briefing):
+        """Save a polished HTML report for local viewing in a browser."""
+        timestamp = datetime.now().strftime("%Y-%m-%d")
+        filename = self.config["briefing_dir"] / f"briefing_{timestamp}.html"
+        stories = self.stories[:8]
+        story_rows = "".join(
+            f"<li><strong>{html.escape(story.get('title',''))}</strong><br/>{html.escape(story.get('source',''))} — {story.get('points',0)} points</li>"
+            for story in stories
+        )
+        html_body = dedent(f"""
+        <!doctype html>
+        <html lang="en">
+        <head>
+          <meta charset="utf-8">
+          <title>Cybersecurity Daily Briefing</title>
+          <style>
+            body {{ font-family: Arial, sans-serif; margin: 2rem; color: #111827; }}
+            h1, h2 {{ color: #0f172a; }}
+            .card {{ border: 1px solid #d1d5db; border-radius: 8px; padding: 1rem; margin-bottom: 1rem; }}
+            code {{ background: #f3f4f6; padding: 0.2rem 0.4rem; border-radius: 4px; }}
+          </style>
+        </head>
+        <body>
+          <h1>Cybersecurity Daily Briefing</h1>
+          <p><strong>Generated:</strong> {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}</p>
+          <div class="card">
+            <h2>Briefing</h2>
+            <pre>{html.escape(briefing)}</pre>
+          </div>
+          <div class="card">
+            <h2>Top Stories</h2>
+            <ul>{story_rows}</ul>
+          </div>
+        </body>
+        </html>
+        """)
+
+        with open(filename, "w", encoding="utf-8") as f:
+            f.write(html_body)
+
+        print(f"🌐 HTML report saved to: {filename}")
+        return filename
+
     def send_to_email(self, briefing):
         """Send the briefing to an email recipient when configured."""
         smtp_host = self.config.get("smtp_host", "")
@@ -809,6 +853,7 @@ Today's Cybersecurity News Stories:
         if self.config.get("save_outputs", True):
             filepath = self.save_briefing(briefing)
             self.save_ioc_report()
+            self.save_html_report(briefing)
         
         print(f"\n✅ Done! Your briefing is ready.")
         print(f"📁 Briefings: {self.config['briefing_dir']}")
@@ -826,6 +871,38 @@ def parse_args():
     return parser.parse_args()
 
 
+def build_scheduler_files(output_dir):
+    """Create sample systemd and cron files for scheduled runs."""
+    output_dir = Path(output_dir).resolve()
+    service_dir = output_dir / "systemd"
+    service_dir.mkdir(parents=True, exist_ok=True)
+
+    systemd_unit = f"""[Unit]
+Description=Cybersecurity Daily Briefing Agent
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+WorkingDirectory={output_dir}
+ExecStart={Path(sys.executable).resolve()} {output_dir / 'cybersec_agent.py'} --output-dir {output_dir} --no-slack
+User={os.getenv('USER', 'root')}
+Environment=PYTHONPATH={output_dir}
+
+[Install]
+WantedBy=multi-user.target
+"""
+
+    cron_entry = f"""{os.getenv('CRON_SCHEDULE', '0 8 * * *')} {os.getenv('USER', 'root')} {Path(sys.executable).resolve()} {output_dir / 'cybersec_agent.py'} --output-dir {output_dir} --no-slack > {output_dir / 'cron.log'} 2>&1
+"""
+
+    (service_dir / "cybersec-agent.service").write_text(systemd_unit, encoding="utf-8")
+    (output_dir / "cybersec-agent.cron").write_text(cron_entry, encoding="utf-8")
+
+    print(f"🗓️ Scheduler files written to {service_dir} and {output_dir}")
+    return service_dir / "cybersec-agent.service", output_dir / "cybersec-agent.cron"
+
+
 def main():
     """Entry point"""
     args = parse_args()
@@ -835,6 +912,9 @@ def main():
     CONFIG["send_to_slack"] = not args.no_slack and not args.print_only
     CONFIG["save_outputs"] = not args.no_save and not args.print_only
     CONFIG["use_ai"] = not args.no_ai
+
+    if os.getenv("GENERATE_SCHEDULER_FILES", "").lower() in {"1", "true", "yes"}:
+        build_scheduler_files(CONFIG["output_dir"])
 
     agent = CybersecNewsAgent()
     agent.run()
