@@ -51,8 +51,13 @@ Add the following values as needed:
 - `GROQ_API_KEY`
 - `SLACK_WEBHOOK_URL`
 - `OUTPUT_DIR` (optional)
+- `MAX_STORY_COUNT` (optional, default 12)
+- `GROQ_MODEL` (optional)
+- `GROQ_ENDPOINT` (optional)
 - `SMTP_HOST`, `SMTP_PORT`, `SMTP_USER`, `SMTP_PASSWORD`, `SMTP_FROM`, `SMTP_TO` (optional)
 - `DISCORD_WEBHOOK_URL` (optional)
+- `CRON_SCHEDULE` (optional)
+- `GENERATE_SCHEDULER_FILES` (optional)
 
 3. **Create and activate a virtual environment:**
 ```bash
@@ -124,6 +129,9 @@ Supported environment variables:
 - `GROQ_API_KEY`
 - `SLACK_WEBHOOK_URL`
 - `OUTPUT_DIR`
+- `MAX_STORY_COUNT`
+- `GROQ_MODEL`
+- `GROQ_ENDPOINT`
 - `SMTP_HOST`
 - `SMTP_PORT`
 - `SMTP_USER`
@@ -134,4 +142,4 @@ Supported environment variables:
 - `CRON_SCHEDULE`
 - `GENERATE_SCHEDULER_FILES`
 
-These drive output location, delivery channels, and scheduler generation.
+These drive output location, delivery channels, AI configuration, and scheduler generation.
