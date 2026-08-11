@@ -18,7 +18,7 @@ Cybersecurity News AI Agent is an automated security briefing tool designed for 
 
 ## Screenshots
 
-![Agent briefing output](2026-06-06_22-26.png)
+![Agent briefing output](Cybersecurity-new-agent.png)
 
 ![CVE enrichment and scoring](2026-06-06_22-46.png)
 
