@@ -6,3 +6,4 @@ __pycache__/
 *.pyd
 *.swp
 .DS_Store
+output/
