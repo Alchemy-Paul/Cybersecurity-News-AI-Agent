@@ -477,12 +477,18 @@ Today's Cybersecurity News Stories:
         
         # Known false positives to filter out
         false_positives = {
-        "github.com", "google.com", "microsoft.com", "apple.com",
-        "reddit.com", "twitter.com", "linkedin.com", "youtube.com",
-        "amazon.com", "cloudflare.com", "wikipedia.org",
-        "news.ycombinator.com", "duo.com", "threatpost.com",
-        "www.cytidel.com", "ycombinator.com"
-    }
+            "github.com", "google.com", "microsoft.com", "apple.com",
+            "reddit.com", "twitter.com", "linkedin.com", "youtube.com",
+            "amazon.com", "cloudflare.com", "wikipedia.org",
+            "news.ycombinator.com", "duo.com", "threatpost.com",
+            "www.cytidel.com", "ycombinator.com",
+            # Our own news sources — links to these are article URLs, not IOCs
+            "hn.algolia.com", "cybersecuritynews.com",
+            "www.cybersecuritynews.com", "feeds.feedburner.com",
+            "thehackernews.com", "www.thehackernews.com",
+            "bleepingcomputer.com", "www.bleepingcomputer.com",
+            "securelist.com", "www.securelist.com"
+        }
         
         iocs = {
             "ipv4": set(),
