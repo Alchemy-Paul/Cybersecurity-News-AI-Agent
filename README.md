@@ -114,7 +114,7 @@ crontab -e
 - `--no-slack`: Skip sending the briefing to Slack
 - `--no-save`: Skip saving briefing and IOC files to disk
 - `--print-only`: Display the briefing in the terminal only; disables Slack send and saving
-- `--no-ai`: Skip Groq AI generation and use the basic briefing instead
+- `--no-ai`: Skip Groq AI generation and use the basic briefing instead.
 
 ## Output
 
