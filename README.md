@@ -5,7 +5,7 @@ This project automatically gathers cybersecurity news, prioritizes the most rele
 ## What it does
 
 - Aggregates stories from Hacker News security searches and RSS feeds
-- Deduplicates and scores stories by engagement, recency, keyword relevance, and CVE impact
+- Groups closely related headlines, preserves their source coverage, and scores stories by engagement, known recency, keyword relevance, and CVE impact
 - Enriches CVEs with CISA KEV, EPSS and NVD data, showing `unknown` instead of guessing when a source is unavailable
 - Flags stories that affect the products on your watchlist
 - Extracts common IOCs from story titles and URLs, including IPv4s, domains, MD5, SHA256, and CVE IDs
@@ -212,5 +212,6 @@ Add a line similar to:
 
 - The script automatically creates the output folders if they do not already exist.
 - Story prioritization is based on keyword relevance, age, engagement, and detected CVE severity.
+- Closely related headlines are grouped into one story with contributing sources shown. Stories without a usable publication date are marked unknown and receive no freshness bonus.
 - When a CVE cannot be fetched from NVD, the agent assigns a heuristic severity tag to keep the briefing useful even during upstream issues.
 - The project includes a small unittest suite to verify sanitization, prompt structure, scoring behavior, and CVE fallback logic.

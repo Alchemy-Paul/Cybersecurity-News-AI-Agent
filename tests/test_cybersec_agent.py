@@ -53,6 +53,69 @@ class CybersecAgentTests(unittest.TestCase):
         self.assertIn("RECOMMENDED ACTIONS", prompt)
         self.assertIn("CVE-2026-12345", prompt)
 
+    def test_related_headlines_are_grouped_and_sources_are_retained(self):
+        self.agent.stories = [
+            {
+                "title": "OpenSSH Issues Emergency Fix for Flaw Letting Long Passwords Bypass SSH Auth on Alpine Linux",
+                "url": "https://example.com/openssh-fix",
+                "source": "The Hacker News",
+                "created": "2026-11-06T08:00:00Z",
+                "points": 2,
+            },
+            {
+                "title": "OpenSSH Flaw Could Let Attackers Bypass Password Authentication on Alpine Linux Servers",
+                "url": "https://example.net/openssh-flaw",
+                "source": "BleepingComputer",
+                "created": "2026-11-06T09:00:00Z",
+                "points": 1,
+            },
+            {
+                "title": "Microsoft releases security update for Windows",
+                "url": "https://example.org/windows-update",
+                "source": "Other Feed",
+                "created": "2026-11-06T09:30:00Z",
+                "points": 0,
+            },
+        ]
+
+        self.agent.deduplicate_stories()
+
+        self.assertEqual(len(self.agent.stories), 2)
+        grouped = next(story for story in self.agent.stories if "OpenSSH" in story["title"])
+        self.assertEqual(grouped["source"], "BleepingComputer")
+        self.assertEqual(grouped["related_stories"], 1)
+        self.assertEqual(
+            grouped["coverage_sources"],
+            ["The Hacker News", "BleepingComputer"],
+        )
+        prompt_record = self.agent.format_story_for_prompt(1, grouped)
+        self.assertIn("Coverage: The Hacker News, BleepingComputer", prompt_record)
+
+    def test_unknown_publication_date_is_not_treated_as_fresh(self):
+        story = {
+            "title": "Routine security update",
+            "url": "https://example.com/update",
+            "source": "Example Feed",
+            "created": "not a date",
+            "summary": "A routine update.",
+            "points": 0,
+            "comments": 0,
+        }
+
+        self.agent.normalize_story(story)
+        unknown_date_score, reasons = self.agent.score_story_relevance(
+            story, return_reasons=True
+        )
+        fresh_score = self.agent.score_story_relevance(
+            {**story, "age_hours": 0}
+        )
+
+        self.assertIsNone(story["age_hours"])
+        self.assertEqual(story["published"], "")
+        self.assertNotIn("fresh", reasons)
+        self.assertLess(unknown_date_score, fresh_score)
+        self.assertIn("Age: unknown", self.agent.format_story_for_prompt(1, story))
+
     def test_score_story_relevance_increases_for_cve_and_engagement(self):
         base_story = {
             "title": "Routine update",

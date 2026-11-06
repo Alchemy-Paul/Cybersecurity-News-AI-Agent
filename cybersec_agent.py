@@ -14,6 +14,7 @@ import sys
 import json
 import requests
 import feedparser
+from difflib import SequenceMatcher
 from datetime import datetime, timedelta, timezone
 from textwrap import dedent
 from email.message import EmailMessage
@@ -213,7 +214,7 @@ class CybersecNewsAgent:
         if isinstance(date_value, (int, float)):
             return datetime.fromtimestamp(date_value, tz=timezone.utc)
         if not date_value:
-            return datetime.now(tz=timezone.utc)
+            return None
         if isinstance(date_value, str):
             try:
                 parsed = datetime.fromisoformat(date_value.replace("Z", "+00:00"))
@@ -225,7 +226,49 @@ class CybersecNewsAgent:
                 return parsed if parsed.tzinfo else parsed.replace(tzinfo=timezone.utc)
             except Exception:
                 pass
-        return datetime.now(tz=timezone.utc)
+        return None
+
+    @staticmethod
+    def _title_tokens(title):
+        ignored = {
+            "a", "an", "and", "are", "as", "at", "by", "for", "from",
+            "in", "into", "is", "its", "of", "on", "or", "the", "to",
+            "with", "after", "amid", "could", "how", "new", "says", "say",
+            "security", "cybersecurity", "hackers", "attacker", "attackers",
+            "exploit", "exploits", "exploited", "flaw", "flaws",
+            "vulnerability", "vulnerabilities", "critical", "zero", "day",
+            "patch", "patches", "issue", "issues", "discovered", "lets",
+            "let", "allow", "allows", "allowing",
+        }
+        tokens = set(re.findall(r"[a-z0-9]+", (title or "").lower()))
+        return {token for token in tokens if token not in ignored and not token.startswith("cve")}
+
+    @classmethod
+    def _same_story_cluster(cls, first, second):
+        first_title = first.get("title", "")
+        second_title = second.get("title", "")
+        if first_title.strip() and first_title.strip().lower() == second_title.strip().lower():
+            return True
+
+        first_cves = set(extract_cve_ids(first_title, first.get("summary", "")))
+        second_cves = set(extract_cve_ids(second_title, second.get("summary", "")))
+        if first_cves and second_cves and not first_cves.intersection(second_cves):
+            return False
+
+        first_tokens = cls._title_tokens(first_title)
+        second_tokens = cls._title_tokens(second_title)
+        shared = first_tokens & second_tokens
+        if len(shared) >= 3 and len(shared) / min(len(first_tokens), len(second_tokens)) >= 0.5:
+            return True
+
+        # Catch editorially different headlines for the same underlying report.
+        first_normalized = " ".join(sorted(first_tokens))
+        second_normalized = " ".join(sorted(second_tokens))
+        return bool(
+            first_normalized
+            and second_normalized
+            and SequenceMatcher(None, first_normalized, second_normalized).ratio() >= 0.78
+        )
 
     def sanitize_text(self, text, max_length=0):
         if not text:
@@ -268,6 +311,8 @@ Analyze these cybersecurity news stories and produce a concise daily briefing wi
 
 Rules:
 - Use only facts present in the stories below. Cite the story number, e.g. [3], for each claim.
+- Related headlines are grouped into one story with their source coverage listed; do not describe them as separate incidents unless the evidence says they are separate.
+- Use the reported age when judging freshness. An unknown age is not evidence that a story is new.
 - Do not invent CVSS scores, EPSS values, affected products, or indicators of compromise.
   If something is not in the data, write "unknown".
 - "KEV: unknown" means the CISA feed could not be checked; do not treat it as "not exploited".
@@ -287,17 +332,26 @@ Rules:
         cve_text = ", ".join([self.describe_cve(c) for c in cves]) or "None detected"
         hits = story.get("watchlist_hits", [])
         watch_text = f"WATCHLIST MATCH ({', '.join(hits)})" if hits else "no match"
-
-        return (
-            f"{index}. {title}\n"
+        age_hours = story.get("age_hours")
+        age_text = f"{age_hours:.1f}h" if age_hours is not None else "unknown"
+        lines = [
+            f"{index}. {title}",
             f"Source: {self.sanitize_text(story.get('source', 'Unknown'))} | "
             f"Points: {story.get('points', 0)} | Comments: {story.get('comments', 0)} | "
-            f"Age: {story.get('age_hours', 0):.1f}h\n"
-            f"Summary: {summary or 'No summary available.'}\n"
-            f"CVEs: {cve_text}\n"
-            f"Our stack: {watch_text}\n"
-            f"URL: {story.get('url', '')}"
-        )
+            f"Age: {age_text}",
+        ]
+        if story.get("related_stories", 0):
+            sources = ", ".join(story.get("coverage_sources", [])) or "unknown"
+            lines.append(
+                f"Coverage: {sources} ({story['related_stories']} related stories)"
+            )
+        lines.extend([
+            f"Summary: {summary or 'No summary available.'}",
+            f"CVEs: {cve_text}",
+            f"Our stack: {watch_text}",
+            f"URL: {story.get('url', '')}",
+        ])
+        return "\n".join(lines)
 
     @staticmethod
     def describe_cve(cve):
@@ -325,8 +379,11 @@ Rules:
         story["summary"] = self.sanitize_text(story.get("summary", ""), max_length=360)
 
         published = self.parse_date(story.get("created") or story.get("published") or story.get("updated"))
-        story["published"] = published.isoformat()
-        story["age_hours"] = max(0.0, (datetime.now(tz=timezone.utc) - published).total_seconds() / 3600)
+        story["published"] = published.isoformat() if published else ""
+        story["age_hours"] = (
+            max(0.0, (datetime.now(tz=timezone.utc) - published).total_seconds() / 3600)
+            if published else None
+        )
         if not story["summary"]:
             story["summary"] = self.fetch_story_summary(story["url"])
             story["summary"] = self.sanitize_text(story["summary"], max_length=360)
@@ -334,22 +391,50 @@ Rules:
         story["priority_score"] = story.get("points", 0)
 
     def deduplicate_stories(self):
-        unique = {}
+        clusters = []
         for story in self.stories:
-            key = (story.get("url") or story.get("title", "")).strip().lower()
-            if not key:
+            title = (story.get("title") or "").strip()
+            url = (story.get("url") or "").strip().lower()
+            if not title and not url:
                 continue
-            existing = unique.get(key)
-            if existing:
-                if story.get("points", 0) > existing.get("points", 0):
-                    unique[key] = story
+            cluster = next(
+                (
+                    candidate for candidate in clusters
+                    if any(
+                        url and url == (member.get("url") or "").strip().lower()
+                        for member in candidate
+                    )
+                    or self._same_story_cluster(story, candidate[0])
+                ),
+                None,
+            )
+            if cluster is None:
+                clusters.append([story])
             else:
-                unique[key] = story
+                cluster.append(story)
+
+        unique = []
+        for cluster in clusters:
+            def representative_key(story):
+                published = self.parse_date(
+                    story.get("created") or story.get("published") or story.get("updated")
+                )
+                timestamp = published.timestamp() if published else float("-inf")
+                return timestamp, story.get("points", 0), story.get("comments", 0)
+
+            representative = max(cluster, key=representative_key).copy()
+            sources = list(dict.fromkeys(
+                member.get("source", "Unknown") for member in cluster
+                if member.get("source")
+            ))
+            representative["coverage_sources"] = sources
+            representative["related_stories"] = len(cluster) - 1
+            unique.append(representative)
 
         duplicates = len(self.stories) - len(unique)
         if duplicates > 0:
-            print(f"🔁 Removed {duplicates} duplicate stories")
-        self.stories = list(unique.values())
+            print(f"🔁 Grouped {duplicates} duplicate or closely related stories")
+        self.stories = unique
 
     def fetch_all_news(self):
         """Fetch news from all configured sources"""
@@ -402,11 +487,13 @@ Rules:
             score += 30
             reasons.append("breach")
 
-        age_hours = float(story.get("age_hours", 0.0) or 0.0)
-        age_bonus = max(0.0, 48.0 - age_hours)
-        score += age_bonus * 2.2
-        if age_hours <= 24:
-            reasons.append("fresh")
+        age_hours = story.get("age_hours")
+        if age_hours is not None:
+            age_hours = float(age_hours)
+            age_bonus = max(0.0, 48.0 - age_hours)
+            score += age_bonus * 2.2
+            if age_hours <= 24:
+                reasons.append("fresh")
 
         for cve in story.get("cves", []):
             tag = (cve.get("tag") or "").lower()
@@ -712,10 +799,19 @@ Rules:
 
         for i, story in enumerate(top, 1):
             briefing += f"### {i}. {story['title']}\n"
+            age_hours = story.get("age_hours")
+            age_text = f"{age_hours:.1f} hours" if age_hours is not None else "unknown"
+            briefing += f"- **Published:** {story.get('published') or 'unknown'} (age: {age_text})\n"
             summary = self.sanitize_text(story.get("summary", ""), max_length=180)
             if summary:
                 briefing += f"- **Summary:** {summary}\n"
             briefing += f"- **Source:** {story['source']}\n"
+            if story.get("related_stories", 0):
+                sources = ", ".join(story.get("coverage_sources", [])) or "unknown"
+                briefing += (
+                    f"- **Related coverage:** {story['related_stories']} other stories "
+                    f"from {sources}\n"
+                )
             if story.get("watchlist_hits"):
                 briefing += f"- **Watchlist match:** {', '.join(story['watchlist_hits'])}\n"
             for cve in story.get("cves", []):
