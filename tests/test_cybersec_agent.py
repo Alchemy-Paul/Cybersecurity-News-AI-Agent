@@ -1,9 +1,18 @@
+from contextlib import redirect_stdout
+from io import StringIO
 import json
 import os
+import sys
 import tempfile
 import unittest
 from pathlib import Path
 from unittest.mock import Mock, patch
+
+import requests
+
+PROJECT_ROOT = str(Path(__file__).resolve().parents[1])
+if PROJECT_ROOT not in sys.path:
+    sys.path.insert(0, PROJECT_ROOT)
 
 from cybersec_agent import CONFIG, DEFAULT_GROQ_MODEL, CybersecNewsAgent
 from enrichment import VulnEnricher
@@ -51,6 +60,88 @@ class CybersecAgentTests(unittest.TestCase):
         raw = "<p>Hello <b>world</b> &amp; friends</p>"
         result = self.agent.sanitize_text(raw, max_length=20)
         self.assertEqual(result, "Hello world & friends")
+
+    def test_unreachable_rss_feed_is_skipped_with_nonfatal_warning(self):
+        self.agent.stories = []
+        output = StringIO()
+        with patch(
+            "cybersec_agent.requests.get",
+            side_effect=requests.ConnectionError("Network is unreachable"),
+        ):
+            with redirect_stdout(output):
+                self.agent.fetch_rss({
+                    "name": "Cybersecurity News",
+                    "url": "https://cybersecuritynews.com/feed/",
+                })
+
+        self.assertEqual(self.agent.stories, [])
+        self.assertIn("skipping it and continuing with other feeds", output.getvalue())
+        self.assertNotIn("Error fetching", output.getvalue())
+
+    def test_unconfigured_email_and_discord_are_silent_and_do_not_send(self):
+        self.agent.config.update({
+            "smtp_host": "",
+            "smtp_from": "",
+            "smtp_to": "",
+            "discord_webhook_url": "",
+        })
+        output = StringIO()
+        with patch("cybersec_agent.requests.post") as post:
+            with patch("cybersec_agent.smtplib.SMTP") as smtp:
+                with redirect_stdout(output):
+                    self.agent.send_to_email("briefing")
+                    self.agent.send_to_discord("briefing")
+
+        self.assertEqual(output.getvalue(), "")
+        post.assert_not_called()
+        smtp.assert_not_called()
+
+    def test_slack_delivery_uses_compact_native_blocks_instead_of_raw_markdown(self):
+        self.agent.config["slack_webhook_url"] = "https://hooks.slack.test/example"
+        self.agent.config["max_story_count"] = 6
+        self.agent.watchlist = ["openssh"]
+        self.agent.stories = [
+            {
+                "title": f"Security story {index}",
+                "url": f"https://example.com/story-{index}",
+                "source": "Example Feed",
+                "age_hours": index,
+                "watchlist_hits": ["openssh"] if index < 4 else [],
+                "cves": [{
+                    "id": f"CVE-2026-1234{index}",
+                    "tag": "🟠 HIGH",
+                }] if index == 1 else [],
+            }
+            for index in range(1, 7)
+        ]
+        self.agent.ai_questions = [
+            ("Can we confirm whether this product is deployed?", [1])
+        ]
+        response = Mock(status_code=200)
+
+        with patch("cybersec_agent.requests.post", return_value=response) as post:
+            self.agent.send_to_slack("# Full markdown report\n\n## Top stories")
+
+        payload = post.call_args.kwargs["json"]
+        self.assertTrue(payload["text"].startswith("Daily Security Briefing —"))
+        blocks = payload["blocks"]
+        section_texts = [
+            block["text"]["text"]
+            for block in blocks
+            if block["type"] == "section"
+        ]
+        rendered = "\n".join(section_texts)
+        self.assertIn("*POSSIBLE WATCHLIST MATCHES*", rendered)
+        self.assertIn("*TOP STORIES*", rendered)
+        self.assertIn("*AI TRIAGE QUESTIONS*", rendered)
+        self.assertIn("<https://example.com/story-1|Security story 1>", rendered)
+        self.assertIn("CVE-2026-12341", rendered)
+        self.assertNotIn("## Top stories", rendered)
+        self.assertNotIn("**", rendered)
+        self.assertLessEqual(len(blocks), 50)
+        for block in blocks:
+            if block["type"] == "section":
+                self.assertLessEqual(len(block["text"]["text"]), 3000)
 
     def test_evidence_briefing_does_not_call_llm_or_invent_actions(self):
         self.agent.stories = [{

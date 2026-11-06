@@ -119,6 +119,7 @@ class CybersecNewsAgent:
         self.config.setdefault("enrich", True)
         self.watchlist = load_watchlist(self.config.get("watchlist_file"))
         self.enricher = None
+        self.ai_questions = []
 
     def generate_ai_triage_questions(self, stories):
         """Ask Groq for cited questions, not factual claims or remediation commands."""
@@ -279,8 +280,16 @@ class CybersecNewsAgent:
                     "created": entry.get("published", ""),
                     "summary": entry.get("summary", "")
                 })
-        except Exception as e:
-            print(f"Error fetching {source['name']}: {e}")
+        except requests.RequestException as exc:
+            print(
+                f"⚠️  Could not reach {source['name']} RSS; skipping it and "
+                f"continuing with other feeds. ({exc})"
+            )
+        except Exception as exc:
+            print(
+                f"⚠️  Could not process {source['name']} RSS; skipping it and "
+                f"continuing with other feeds. ({exc})"
+            )
 
     def fetch_story_summary(self, url):
         """Fetch a short article summary from the page for richer briefing context."""
@@ -646,6 +655,7 @@ class CybersecNewsAgent:
             briefing += "\n"
 
         ai_questions = self.generate_ai_triage_questions(top)
+        self.ai_questions = ai_questions
         if ai_questions:
             briefing += (
                 "## AI-Generated Triage Questions (hypotheses; verify before acting)\n\n"
@@ -912,7 +922,6 @@ class CybersecNewsAgent:
         smtp_to = self.config.get("smtp_to", "")
 
         if not all([smtp_host, smtp_from, smtp_to]):
-            print("⚠️  Email delivery not configured. Set SMTP_HOST, SMTP_FROM, and SMTP_TO to enable it.")
             return
 
         try:
@@ -936,7 +945,6 @@ class CybersecNewsAgent:
         """Send the briefing to Discord via webhook when configured."""
         webhook_url = self.config.get("discord_webhook_url", "")
         if not webhook_url:
-            print("⚠️  No Discord webhook URL configured. Set DISCORD_WEBHOOK_URL to enable Discord delivery.")
             return
 
         try:
@@ -950,48 +958,115 @@ class CybersecNewsAgent:
             print(f"❌ Error sending to Discord: {e}")
 
     def send_to_slack(self, briefing):
-        """Send briefing to Slack channel"""
+        """Send a compact, Slack-native summary instead of raw Markdown."""
         webhook_url = self.config.get("slack_webhook_url", "")
         if not webhook_url:
             print("⚠️  No Slack webhook URL configured. Set SLACK_WEBHOOK_URL in your environment or .env file.")
             return
-    
-        # Format for Slack - keep it concise
-        date_str = datetime.now().strftime("%B %d, %Y")
-    
-        slack_message = {
-            "text": f"🛡️ *DAILY SOC BRIEFING — {date_str}*",
-            "blocks": [
-                {
-                    "type": "header",
-                    "text": {
-                        "type": "plain_text",
-                        "text": f"🛡️ Daily SOC Briefing — {date_str}"
-                    }
+
+        date_str = datetime.now().strftime("%b %d, %Y")
+        top = self.stories[: self.config.get("max_story_count", 12)]
+        watchlist_matches = [story for story in top if story.get("watchlist_hits")]
+        visible_stories = top[:5]
+
+        def escape_mrkdwn(value):
+            return (
+                str(value)
+                .replace("&", "&amp;")
+                .replace("<", "&lt;")
+                .replace(">", "&gt;")
+            )
+
+        def story_link(story):
+            title = escape_mrkdwn(self.sanitize_text(story.get("title", "Untitled"), 180))
+            url = str(story.get("url", "")).strip()
+            return f"<{url}|{title}>" if url.startswith(("http://", "https://")) else title
+
+        blocks = [
+            {
+                "type": "header",
+                "text": {
+                    "type": "plain_text",
+                    "text": "🛡️ Daily Security Briefing",
+                    "emoji": True,
                 },
-                {
-                    "type": "divider"
-                },
+            },
+            {
+                "type": "context",
+                "elements": [{
+                    "type": "mrkdwn",
+                    "text": f"{date_str}  ·  {len(top)} stories prioritized",
+                }],
+            },
+            {"type": "divider"},
+        ]
+
+        if watchlist_matches:
+            lines = ["*POSSIBLE WATCHLIST MATCHES*"]
+            for story in watchlist_matches[:3]:
+                hits = ", ".join(
+                    f"`{escape_mrkdwn(hit)}`" for hit in story.get("watchlist_hits", [])
+                )
+                lines.append(f"• {story_link(story)} — {hits}")
+            if len(watchlist_matches) > 3:
+                lines.append(f"_+{len(watchlist_matches) - 3} more in the full report_")
+            lines.append("_Text/product match only; exposure is not confirmed._")
+            blocks.append({
+                "type": "section",
+                "text": {"type": "mrkdwn", "text": "\n".join(lines)},
+            })
+            blocks.append({"type": "divider"})
+
+        blocks.append({
+            "type": "section",
+            "text": {"type": "mrkdwn", "text": "*TOP STORIES*"},
+        })
+        for index, story in enumerate(visible_stories, 1):
+            age_hours = story.get("age_hours")
+            age = f"{age_hours:.0f}h ago" if age_hours is not None else "age unknown"
+            details = [
+                f"*{index}. {story_link(story)}*",
+                f"{escape_mrkdwn(story.get('source', 'Unknown'))}  ·  {age}",
+            ]
+            cve_entries = story.get("cves", [])
+            if cve_entries:
+                cve_summaries = []
+                for cve in cve_entries[:3]:
+                    severity = escape_mrkdwn(cve.get("tag", "⚪ UNKNOWN"))
+                    cve_summaries.append(f"`{escape_mrkdwn(cve.get('id', 'CVE unknown'))}` {severity}")
+                details.append("CVEs: " + "  ·  ".join(cve_summaries))
+            blocks.append({
+                "type": "section",
+                "text": {"type": "mrkdwn", "text": "\n".join(details)},
+            })
+
+        if self.ai_questions:
+            question_lines = ["*AI TRIAGE QUESTIONS*  _Verify before acting_"]
+            for question, story_ids in self.ai_questions[:4]:
+                citations = ", ".join(f"[{story_id}]" for story_id in story_ids)
+                question_lines.append(f"• {escape_mrkdwn(question)} {citations}")
+            blocks.extend([
+                {"type": "divider"},
                 {
                     "type": "section",
-                    "text": {
-                        "type": "mrkdwn",
-                        "text": briefing[:2900]  # Slack block limit
-                    }
+                    "text": {"type": "mrkdwn", "text": "\n".join(question_lines)},
                 },
-                {
-                    "type": "divider"
-                },
-                {
-                    "type": "context",
-                    "elements": [
-                        {
-                            "type": "mrkdwn",
-                            "text": "Generated by Cybersecurity News Evidence Briefing Agent | Full briefing saved locally"
-                        }
-                    ]
-                }
-            ]
+            ])
+
+        blocks.extend([
+            {"type": "divider"},
+            {
+                "type": "context",
+                "elements": [{
+                    "type": "mrkdwn",
+                    "text": "Publisher reports are unverified. Full evidence briefing saved locally.",
+                }],
+            },
+        ])
+
+        slack_message = {
+            "text": f"Daily Security Briefing — {date_str} ({len(top)} stories)",
+            "blocks": blocks,
         }
         
         try:
@@ -1048,9 +1123,11 @@ class CybersecNewsAgent:
         if self.config.get("send_to_slack", True):
             self.send_to_slack(briefing)
 
-        # Send to email/Discord if configured
-        self.send_to_email(briefing)
-        self.send_to_discord(briefing)
+        # Optional delivery channels remain silent when not configured.
+        if all(self.config.get(key) for key in ("smtp_host", "smtp_from", "smtp_to")):
+            self.send_to_email(briefing)
+        if self.config.get("discord_webhook_url"):
+            self.send_to_discord(briefing)
 
         # Save
         if self.config.get("save_outputs", True):
