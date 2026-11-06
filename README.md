@@ -1,13 +1,13 @@
 # Cybersecurity News AI Agent
 
-This project automatically gathers cybersecurity news, prioritizes the most relevant stories for a SOC workflow, enriches them with CVE severity data, extracts indicators of compromise, and generates a daily briefing. It can print the briefing locally, save markdown and HTML reports, and deliver the result to Slack, email, or Discord.
+This project automatically gathers cybersecurity news, prioritizes stories for a SOC workflow, enriches CVEs, extracts potential indicators, and generates a source-grounded daily evidence briefing. It can print the briefing locally, save markdown and HTML reports, and deliver the result to Slack, email, or Discord.
 
 ## What it does
 
 - Aggregates stories from Hacker News security searches and RSS feeds
 - Groups closely related headlines, preserves their source coverage, and scores stories by engagement, known recency, keyword relevance, and CVE impact
 - Enriches CVEs with CISA KEV, EPSS and NVD data, showing `unknown` instead of guessing when a source is unavailable
-- Flags stories that affect the products on your watchlist
+- Flags possible watchlist matches without claiming that the product is deployed or affected
 - Extracts common IOCs from story titles and URLs, including IPv4s, domains, MD5, SHA256, and CVE IDs
 - Saves daily briefing reports in markdown and HTML format
 - Sends the briefing to Slack, email, or Discord when configured
@@ -15,11 +15,11 @@ This project automatically gathers cybersecurity news, prioritizes the most rele
 
 ## Core features
 
-- AI-powered briefing generation with Groq using a SOC-focused prompt
-- Automatic fallback to a basic briefing when `GROQ_API_KEY` is missing or `--no-ai` is used
+- Deterministic briefing generation from fetched stories and structured CVE enrichment; no LLM-generated claims or remediation instructions are published
+- Publisher-provided headlines and summaries are explicitly labeled as unverified, and watchlist matches are not presented as confirmed exposure
 - Daily archive folders under the configured output directory
 - Optional scheduler file generation via environment variables
-- CLI switches for output directory, story count, saving, AI generation, and print-only mode
+- CLI switches for output directory, story count, saving, and print-only mode
 
 ## Repository layout
 
@@ -45,7 +45,6 @@ This project automatically gathers cybersecurity news, prioritizes the most rele
 - Linux or another Unix-like environment
 - Python 3.8+
 - Internet access for fetching feeds and NVD data
-- Optional: Groq API key for AI-generated summaries
 - Optional: Slack webhook URL, Discord webhook URL, or SMTP credentials for delivery
 
 ## Quick start
@@ -67,12 +66,9 @@ nano .env
 Example settings:
 
 ```env
-GROQ_API_KEY=your_groq_api_key_here
 SLACK_WEBHOOK_URL=<your-slack-webhook-url>
 OUTPUT_DIR=/absolute/path/to/output
 MAX_STORY_COUNT=12
-GROQ_MODEL=openai/gpt-oss-120b
-GROQ_ENDPOINT=https://api.groq.com/openai/v1/chat/completions
 CRON_SCHEDULE=0 8 * * *
 GENERATE_SCHEDULER_FILES=0
 
@@ -105,7 +101,7 @@ pip install -r requirements.txt
 .venv/bin/python cybersec_agent.py
 ```
 
-If `GROQ_API_KEY` is not set, the script falls back to a basic briefing automatically. You can also force the text-only fallback with `--no-ai`.
+The generated report is a deterministic rendering of feed content and CVE enrichment; it does not use a language model to create analysis or remediation advice. Treat publisher summaries as unverified claims and confirm applicability against vendor advisories and your asset inventory.
 
 ## Vulnerability enrichment and "affects our stack"
 
@@ -119,7 +115,7 @@ Stories are ranked KEV first, then EPSS and CVSS, then everything else. Results 
 
 If a source is unreachable the field is shown as `unknown` (never invented). In particular, `KEV: unknown` means the feed could not be checked, which is not the same as "not exploited". Without NVD data, severity is `unknown`; a headline-based hint may be shown but is labelled unverified.
 
-**Watchlist.** Copy `watchlist.example.txt` to `watchlist.txt` and list the vendors/products you run. Stories that mention them, or whose CVEs affect them (via NVD CPE or KEV data), are flagged **Affects Our Stack**, placed in their own briefing section and ranked above everything else. Use specific terms ("microsoft exchange", not "exchange").
+**Watchlist.** Copy `watchlist.example.txt` to `watchlist.txt` and list the vendors/products you run. Stories that mention them, or whose CVEs affect them (via NVD CPE or KEV data), are marked as possible matches and ranked higher. A match is not confirmation that a product is deployed or affected. Use specific terms ("microsoft exchange", not "exchange").
 
 Set `NVD_API_KEY` (free) to raise the NVD rate limit. Use `--no-enrich` to skip all lookups, or `--watchlist PATH` to use another file.
 
@@ -130,7 +126,6 @@ Set `NVD_API_KEY` (free) to raise the NVD rate limit. Use `--no-enrich` to skip 
 .venv/bin/python cybersec_agent.py --no-slack
 .venv/bin/python cybersec_agent.py --no-save
 .venv/bin/python cybersec_agent.py --print-only
-.venv/bin/python cybersec_agent.py --no-ai
 ```
 
 Command-line flags:
@@ -140,7 +135,6 @@ Command-line flags:
 - `--no-slack`: Disable Slack delivery
 - `--no-save`: Skip writing reports to disk
 - `--print-only`: Print the briefing to the terminal without saving or sending it
-- `--no-ai`: Disable Groq and use the basic briefing generator instead
 - `--no-enrich`: Skip KEV / EPSS / NVD lookups (CVE severity will be unknown)
 - `--watchlist`: Path to your watchlist file (default `watchlist.txt` or `WATCHLIST_FILE`)
 
@@ -149,7 +143,7 @@ Command-line flags:
 The script creates these folders automatically when needed:
 
 - `output/briefings/` — markdown and HTML briefing reports named like `briefing_YYYY-MM-DD.md` and `briefing_YYYY-MM-DD.html`
-- `output/ioc_watchlists/` — IOC watchlist text files named like `ioc_watchlist_YYYY-MM-DD.txt`
+- `output/ioc_watchlists/` — candidate IOC reference files extracted from news titles and URLs; validate them before detection or blocking use
 
 Each run also prints a summary of extracted IOCs and the final output paths.
 
@@ -157,12 +151,9 @@ Each run also prints a summary of extracted IOCs and the final output paths.
 
 The application reads the following variables from the environment or a `.env` file:
 
-- `GROQ_API_KEY`
 - `SLACK_WEBHOOK_URL`
 - `OUTPUT_DIR`
 - `MAX_STORY_COUNT`
-- `GROQ_MODEL`
-- `GROQ_ENDPOINT`
 - `SMTP_HOST`
 - `SMTP_PORT`
 - `SMTP_USER`
@@ -173,7 +164,7 @@ The application reads the following variables from the environment or a `.env` f
 - `CRON_SCHEDULE`
 - `GENERATE_SCHEDULER_FILES`
 
-These control the AI model, output location, delivery channels, and scheduler generation behavior.
+These control the output location, delivery channels, and scheduler generation behavior.
 
 ## Scheduler setup
 
@@ -214,4 +205,4 @@ Add a line similar to:
 - Story prioritization is based on keyword relevance, age, engagement, and detected CVE severity.
 - Closely related headlines are grouped into one story with contributing sources shown. Stories without a usable publication date are marked unknown and receive no freshness bonus.
 - When a CVE cannot be fetched from NVD, the agent assigns a heuristic severity tag to keep the briefing useful even during upstream issues.
-- The project includes a small unittest suite to verify sanitization, prompt structure, scoring behavior, and CVE fallback logic.
+- The project includes a small unittest suite to verify sanitization, evidence reporting, scoring behavior, and CVE fallback logic.
