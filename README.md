@@ -15,7 +15,8 @@ This project automatically gathers cybersecurity news, prioritizes stories for a
 
 ## Core features
 
-- Deterministic briefing generation from fetched stories and structured CVE enrichment; no LLM-generated claims or remediation instructions are published
+- Deterministic evidence reporting from fetched stories and structured CVE enrichment
+- Optional Groq AI triage questions, constrained to questions with valid story citations; AI output is labeled as unverified hypotheses and is not remediation advice
 - Publisher-provided headlines and summaries are explicitly labeled as unverified, and watchlist matches are not presented as confirmed exposure
 - Daily archive folders under the configured output directory
 - Optional scheduler file generation via environment variables
@@ -45,6 +46,7 @@ This project automatically gathers cybersecurity news, prioritizes stories for a
 - Linux or another Unix-like environment
 - Python 3.8+
 - Internet access for fetching feeds and NVD data
+- Optional: Groq API key for AI-generated triage questions
 - Optional: Slack webhook URL, Discord webhook URL, or SMTP credentials for delivery
 
 ## Quick start
@@ -66,6 +68,9 @@ nano .env
 Example settings:
 
 ```env
+GROQ_API_KEY=your_groq_api_key_here
+GROQ_MODEL=openai/gpt-oss-120b
+GROQ_ENDPOINT=https://api.groq.com/openai/v1/chat/completions
 SLACK_WEBHOOK_URL=<your-slack-webhook-url>
 OUTPUT_DIR=/absolute/path/to/output
 MAX_STORY_COUNT=12
@@ -101,7 +106,7 @@ pip install -r requirements.txt
 .venv/bin/python cybersec_agent.py
 ```
 
-The generated report is a deterministic rendering of feed content and CVE enrichment; it does not use a language model to create analysis or remediation advice. Treat publisher summaries as unverified claims and confirm applicability against vendor advisories and your asset inventory.
+The report’s evidence section is deterministic. If `GROQ_API_KEY` is configured, Groq adds a clearly separated section of AI-generated triage questions with validated story citations. These are hypotheses, not confirmed findings or remediation instructions. If no key is configured or the API fails, the evidence briefing is still generated without AI questions.
 
 ## Vulnerability enrichment and "affects our stack"
 
@@ -152,6 +157,9 @@ Each run also prints a summary of extracted IOCs and the final output paths.
 The application reads the following variables from the environment or a `.env` file:
 
 - `SLACK_WEBHOOK_URL`
+- `GROQ_API_KEY`
+- `GROQ_MODEL`
+- `GROQ_ENDPOINT`
 - `OUTPUT_DIR`
 - `MAX_STORY_COUNT`
 - `SMTP_HOST`
@@ -164,7 +172,7 @@ The application reads the following variables from the environment or a `.env` f
 - `CRON_SCHEDULE`
 - `GENERATE_SCHEDULER_FILES`
 
-These control the output location, delivery channels, and scheduler generation behavior.
+These control the AI analysis endpoint, output location, delivery channels, and scheduler generation behavior.
 
 ## Scheduler setup
 

@@ -1,9 +1,11 @@
+import json
+import os
 import tempfile
 import unittest
 from pathlib import Path
-from unittest.mock import patch
+from unittest.mock import Mock, patch
 
-from cybersec_agent import CONFIG, CybersecNewsAgent
+from cybersec_agent import CONFIG, DEFAULT_GROQ_MODEL, CybersecNewsAgent
 from enrichment import VulnEnricher
 from tests.fakes import FakeHttp
 
@@ -13,6 +15,9 @@ class CybersecAgentTests(unittest.TestCase):
         # Keep tests hermetic: temp output dir, no watchlist from the repo, no network.
         self._tmp = tempfile.TemporaryDirectory()
         self.addCleanup(self._tmp.cleanup)
+        env_patch = patch.dict(os.environ, {"GROQ_API_KEY": ""})
+        env_patch.start()
+        self.addCleanup(env_patch.stop)
         # CONFIG is a module-level dict shared by every agent, so restore it after each test.
         saved = dict(CONFIG)
         self.addCleanup(lambda: (CONFIG.clear(), CONFIG.update(saved)))
@@ -60,15 +65,59 @@ class CybersecAgentTests(unittest.TestCase):
             "cves": [],
         }]
 
-        with patch("cybersec_agent.requests.post") as post:
-            briefing = self.agent.generate_evidence_briefing()
+        with patch.dict(os.environ, {}, clear=True):
+            with patch("cybersec_agent.requests.post") as post:
+                briefing = self.agent.generate_evidence_briefing()
 
         post.assert_not_called()
         self.assertIn("Publisher-provided summary (unverified)", briefing)
         self.assertIn("https://example.com/advisory", briefing)
         self.assertNotIn("Immediate SOC Priorities", briefing)
         self.assertNotIn("Deploy WordPress core update", briefing)
-        self.assertIn("No incident-specific remediation instructions", briefing)
+        self.assertIn("not verified findings or instructions to change systems", briefing)
+
+    def test_ai_triage_questions_require_question_shape_and_valid_story_citations(self):
+        response = Mock(
+            status_code=200,
+            json=lambda: {
+                "choices": [{
+                    "message": {
+                        "content": json.dumps({
+                            "questions": [
+                                {
+                                    "question": "Can the affected product be confirmed in the asset inventory?",
+                                    "evidence_story_ids": [1],
+                                },
+                                {
+                                    "question": "Version 6.6.1 is vulnerable.",
+                                    "evidence_story_ids": [1],
+                                },
+                                {
+                                    "question": "Is the issue relevant to our environment?",
+                                    "evidence_story_ids": [99],
+                                },
+                            ]
+                        })
+                    }
+                }]
+            },
+        )
+        self.agent.stories = [{
+            "title": "Product vulnerability reported",
+            "summary": "Publisher reports an issue.",
+            "url": "https://example.com/report",
+        }]
+
+        with patch.dict(os.environ, {"GROQ_API_KEY": "test-key"}, clear=True):
+            with patch("cybersec_agent.requests.post", return_value=response) as post:
+                briefing = self.agent.generate_evidence_briefing()
+
+        self.assertEqual(len(post.call_args.kwargs["json"]["messages"]), 2)
+        self.assertEqual(post.call_args.kwargs["json"]["model"], DEFAULT_GROQ_MODEL)
+        self.assertIn("AI-Generated Triage Questions (hypotheses; verify before acting)", briefing)
+        self.assertIn("Can the affected product be confirmed in the asset inventory? [1]", briefing)
+        self.assertNotIn("Version 6.6.1 is vulnerable.", briefing)
+        self.assertNotIn("issue relevant to our environment? [99]", briefing)
 
     def test_related_headlines_are_grouped_and_sources_are_retained(self):
         self.agent.stories = [
@@ -268,8 +317,9 @@ class CybersecAgentTests(unittest.TestCase):
             "source": "X", "points": 0, "comments": 0, "age_hours": 1,
         }]
         self.agent.apply_watchlist()
-        with patch("cybersec_agent.requests.post") as post:
-            briefing = self.agent.generate_evidence_briefing()
+        with patch.dict(os.environ, {}, clear=True):
+            with patch("cybersec_agent.requests.post") as post:
+                briefing = self.agent.generate_evidence_briefing()
 
         post.assert_not_called()
         self.assertIn("Possible Watchlist Matches (not confirmed exposure)", briefing)
