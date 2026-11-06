@@ -48,7 +48,7 @@ load_env_file()
 
 # Configuration
 DEFAULT_OUTPUT_DIR = Path(__file__).resolve().parent / "output"
-DEFAULT_GROQ_MODEL = "qwen/qwen3.6-27b"
+DEFAULT_GROQ_MODEL = "openai/gpt-oss-120b"
 
 CONFIG = {
     "groq_api_key": os.getenv("GROQ_API_KEY", ""),
