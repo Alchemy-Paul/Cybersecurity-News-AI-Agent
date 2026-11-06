@@ -271,11 +271,13 @@ class VulnEnricher:
                 "description": nvd.get("description", ""),
                 "vendors": vendors,
                 "products": products,
+                "nvd_available": bool(nvd),
                 # None = KEV feed unavailable, so we cannot say either way.
                 "kev": None if self.kev is None else kev_info is not None,
                 "kev_info": kev_info,
                 "epss": epss_value,
                 "epss_percentile": epss_pct,
+                "epss_available": epss_value is not None,
             }
 
         self.cache.save()

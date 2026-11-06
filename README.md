@@ -17,7 +17,7 @@ This project automatically gathers cybersecurity news, prioritizes stories for a
 
 - Deterministic evidence reporting from fetched stories and structured CVE enrichment
 - Optional Groq AI triage questions, constrained to questions with valid story citations; AI output is labeled as unverified hypotheses and is not remediation advice
-- Publisher-provided headlines and summaries are explicitly labeled as unverified, and watchlist matches are not presented as confirmed exposure
+- Publisher headlines and summaries are attributed to their source; CVE enrichment includes direct links to official records and identifies unavailable data
 - Daily archive folders under the configured output directory
 - Optional scheduler file generation via environment variables
 - CLI switches for output directory, story count, saving, and print-only mode

@@ -479,6 +479,15 @@ class CybersecNewsAgent:
                 if member.get("source")
             ))
             representative["coverage_sources"] = sources
+            representative["coverage_stories"] = [
+                {
+                    "source": member.get("source", "Unknown"),
+                    "title": member.get("title", ""),
+                    "url": member.get("url", ""),
+                }
+                for member in cluster
+                if member.get("url")
+            ]
             representative["related_stories"] = len(cluster) - 1
             unique.append(representative)
 
@@ -597,11 +606,10 @@ class CybersecNewsAgent:
         briefing = "# Cybersecurity Daily Evidence Briefing\n\n"
         briefing += f"**Generated:** {datetime.now().strftime('%Y-%m-%d %H:%M')}\n\n"
         briefing += (
-            "> Publisher titles and summaries are reported claims, not independently "
-            "verified facts. CVE fields are shown only when returned by enrichment "
-            "sources. A watchlist match does not confirm that a product is deployed "
-            "or affected. Verify details with the linked source and your asset inventory "
-            "before taking action.\n\n"
+            "> News claims are attributed to their publisher. CVE details are cross-checked "
+            "against linked NVD, CISA KEV, and FIRST EPSS records when those sources return "
+            "data. Unavailable data is identified rather than inferred. A watchlist match "
+            "does not confirm that a product is deployed or affected.\n\n"
         )
 
         top = self.stories[: self.config.get("max_story_count", 12)]
@@ -634,24 +642,60 @@ class CybersecNewsAgent:
             )
             summary = self.sanitize_text(story.get("summary", ""), max_length=360)
             if summary:
-                briefing += f"- **Publisher-provided summary (unverified):** {summary}\n"
+                source = self.sanitize_text(story.get("source", "Unknown"))
+                briefing += f"- **Publisher summary ({source}):** {summary}\n"
             if story.get("related_stories", 0):
-                sources = ", ".join(story.get("coverage_sources", [])) or "unknown"
-                briefing += (
-                    f"- **Related coverage:** {story['related_stories']} other stories "
-                    f"from {sources}\n"
-                )
+                related = story.get("coverage_stories", [])
+                links = [
+                    f"[{self.sanitize_text(item.get('source', 'Source'))}]"
+                    f"({item['url']})"
+                    for item in related
+                    if str(item.get("url", "")).startswith(("http://", "https://"))
+                ]
+                if links:
+                    briefing += f"- **Related coverage sources:** {', '.join(links)}\n"
+                else:
+                    sources = ", ".join(story.get("coverage_sources", [])) or "unknown"
+                    briefing += (
+                        f"- **Related coverage:** {story['related_stories']} other stories "
+                        f"from {sources}\n"
+                    )
             for cve in story.get("cves", []):
                 briefing += f"- **Enrichment:** {self.describe_cve(cve)}\n"
+                if cve.get("nvd_description"):
+                    briefing += (
+                        f"  - **NVD description:** {cve['nvd_description']}\n"
+                    )
                 affected = cve.get("vendors", []) + cve.get("products", [])
                 if affected:
                     values = ", ".join(self.sanitize_text(value) for value in affected)
                     briefing += f"  - **NVD affected-product entries:** {values}\n"
                 if cve.get("score") is None and cve.get("severity_hint"):
                     briefing += (
-                        f"  - **Unverified headline severity hint:** "
+                        f"  - **Publisher headline severity (not an official score):** "
                         f"{cve['severity_hint']}\n"
                     )
+                cve_id = cve.get("id", "")
+                kev_status = (
+                    "listed" if cve.get("kev") is True
+                    else "not listed" if cve.get("kev") is False
+                    else "unavailable"
+                )
+                checks = [
+                    (
+                        f"NVD: {'record retrieved' if cve.get('nvd_available') else 'unavailable'} "
+                        f"([NVD](https://nvd.nist.gov/vuln/detail/{cve_id}))"
+                    ),
+                    (
+                        f"CISA KEV: {kev_status} "
+                        "([catalogue](https://www.cisa.gov/known-exploited-vulnerabilities-catalog))"
+                    ),
+                    (
+                        f"FIRST EPSS: {'score retrieved' if cve.get('epss_available') else 'unavailable'} "
+                        f"([lookup](https://api.first.org/data/v1/epss?cve={cve_id}))"
+                    ),
+                ]
+                briefing += f"  - **Official cross-checks:** {'; '.join(checks)}\n"
             briefing += "\n"
 
         ai_questions = self.generate_ai_triage_questions(top)
@@ -669,8 +713,10 @@ class CybersecNewsAgent:
 
         briefing += (
             "## Verification\n\n"
-            "- Open the linked publisher report and confirm important claims against "
-            "the relevant vendor advisory or official source.\n"
+            "- Each story links to its publisher; CVE entries link to NVD, CISA KEV, "
+            "and FIRST EPSS and show whether records or scores were available.\n"
+            "- Source links support the listed claims but do not confirm that an "
+            "affected product or version is present in your environment.\n"
             "- Confirm product and version applicability against your asset inventory "
             "before prioritizing remediation.\n"
             "- AI-generated questions are prompts for investigation, not verified findings "
@@ -804,6 +850,14 @@ class CybersecNewsAgent:
             "epss_percentile": record.get("epss_percentile"),
             "vendors": record.get("vendors", []),
             "products": record.get("products", []),
+            "nvd_description": self.sanitize_text(
+                record.get("description", ""), max_length=360
+            ),
+            "nvd_available": record.get("nvd_available", False),
+            "kev_source_available": record.get("kev") is not None,
+            "epss_available": record.get(
+                "epss_available", record.get("epss") is not None
+            ),
         }
 
     def get_enricher(self):
