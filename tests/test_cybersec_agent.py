@@ -96,47 +96,51 @@ class CybersecAgentTests(unittest.TestCase):
         post.assert_not_called()
         smtp.assert_not_called()
 
-    def test_slack_delivery_uses_compact_native_blocks_instead_of_raw_markdown(self):
+    def test_slack_delivery_preserves_report_and_formats_markdown_headings(self):
         self.agent.config["slack_webhook_url"] = "https://hooks.slack.test/example"
-        self.agent.config["max_story_count"] = 6
-        self.agent.watchlist = ["openssh"]
-        self.agent.stories = [
-            {
-                "title": f"Security story {index}",
-                "url": f"https://example.com/story-{index}",
-                "source": "Example Feed",
-                "age_hours": index,
-                "watchlist_hits": ["openssh"] if index < 4 else [],
-                "cves": [{
-                    "id": f"CVE-2026-1234{index}",
-                    "tag": "🟠 HIGH",
-                }] if index == 1 else [],
-            }
-            for index in range(1, 7)
-        ]
-        self.agent.ai_questions = [
-            ("Can we confirm whether this product is deployed?", [1])
-        ]
+        briefing = (
+            "# Cybersecurity Daily Evidence Briefing\n\n"
+            "**Generated:** 2026-11-06 18:00\n\n"
+            "Publisher claims are unverified.\n\n"
+            "## Possible Watchlist Matches (not confirmed exposure)\n\n"
+            "- [OpenSSH report](https://example.com/openssh) — matched `openssh`.\n\n"
+            "## Reported Stories\n\n"
+            "### 4. [OpenSSH Issues Emergency Fix](https://example.com/openssh)\n"
+            "- **Reported by:** The Hacker News\n"
+            "- **Publisher-provided summary (unverified):** OpenSSH fixes a password bypass.\n"
+            "- **Enrichment:** CVE-2026-12345, CVSS 8.8.\n\n"
+            "## AI-Generated Triage Questions\n\n"
+            "> Verify before acting.\n\n"
+            "- Can we confirm whether this product is deployed? [4]\n\n"
+            "## Verification\n\n"
+            "- Confirm product versions against the asset inventory.\n"
+        )
         response = Mock(status_code=200)
 
         with patch("cybersec_agent.requests.post", return_value=response) as post:
-            self.agent.send_to_slack("# Full markdown report\n\n## Top stories")
+            self.agent.send_to_slack(briefing)
 
         payload = post.call_args.kwargs["json"]
-        self.assertTrue(payload["text"].startswith("Daily Security Briefing —"))
         blocks = payload["blocks"]
+        self.assertEqual(blocks[0]["type"], "header")
+        self.assertEqual(
+            blocks[0]["text"]["text"], "Cybersecurity Daily Evidence Briefing"
+        )
         section_texts = [
             block["text"]["text"]
             for block in blocks
             if block["type"] == "section"
         ]
         rendered = "\n".join(section_texts)
-        self.assertIn("*POSSIBLE WATCHLIST MATCHES*", rendered)
-        self.assertIn("*TOP STORIES*", rendered)
-        self.assertIn("*AI TRIAGE QUESTIONS*", rendered)
-        self.assertIn("<https://example.com/story-1|Security story 1>", rendered)
-        self.assertIn("CVE-2026-12341", rendered)
-        self.assertNotIn("## Top stories", rendered)
+        self.assertIn("*Possible Watchlist Matches (not confirmed exposure)*", rendered)
+        self.assertIn("*Reported Stories*", rendered)
+        self.assertIn("*4. <https://example.com/openssh|OpenSSH Issues Emergency Fix>*", rendered)
+        self.assertIn("*AI-Generated Triage Questions*", rendered)
+        self.assertIn("*Verification*", rendered)
+        self.assertIn("CVE-2026-12345", rendered)
+        self.assertIn("Confirm product versions against the asset inventory.", rendered)
+        self.assertNotIn("##", rendered)
+        self.assertNotIn("###", rendered)
         self.assertNotIn("**", rendered)
         self.assertLessEqual(len(blocks), 50)
         for block in blocks:

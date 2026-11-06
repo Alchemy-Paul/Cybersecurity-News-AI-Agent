@@ -958,16 +958,13 @@ class CybersecNewsAgent:
             print(f"❌ Error sending to Discord: {e}")
 
     def send_to_slack(self, briefing):
-        """Send a compact, Slack-native summary instead of raw Markdown."""
+        """Send the complete briefing with Markdown headings adapted for Slack."""
         webhook_url = self.config.get("slack_webhook_url", "")
         if not webhook_url:
             print("⚠️  No Slack webhook URL configured. Set SLACK_WEBHOOK_URL in your environment or .env file.")
             return
 
         date_str = datetime.now().strftime("%b %d, %Y")
-        top = self.stories[: self.config.get("max_story_count", 12)]
-        watchlist_matches = [story for story in top if story.get("watchlist_hits")]
-        visible_stories = top[:5]
 
         def escape_mrkdwn(value):
             return (
@@ -977,95 +974,95 @@ class CybersecNewsAgent:
                 .replace(">", "&gt;")
             )
 
-        def story_link(story):
-            title = escape_mrkdwn(self.sanitize_text(story.get("title", "Untitled"), 180))
-            url = str(story.get("url", "")).strip()
-            return f"<{url}|{title}>" if url.startswith(("http://", "https://")) else title
+        def inline_mrkdwn(text):
+            text = re.sub(
+                r"\[([^\]]+)\]\((https?://[^)\s]+)\)",
+                lambda match: (
+                    f"<{match.group(2)}|{escape_mrkdwn(match.group(1))}>"
+                ),
+                text,
+            )
+            text = re.sub(r"\*\*(.+?)\*\*", r"*\1*", text)
+            return text
 
-        blocks = [
-            {
+        blocks = []
+        body_lines = []
+
+        def flush_body():
+            while body_lines:
+                chunk = ""
+                while body_lines and len(chunk) + len(body_lines[0]) + 1 <= 3000:
+                    line = body_lines.pop(0)
+                    chunk += ("\n" if chunk else "") + line
+                if not chunk and body_lines:
+                    line = body_lines.pop(0)
+                    chunk = line[:3000]
+                    remainder = line[3000:]
+                    if remainder:
+                        body_lines.insert(0, remainder)
+                if chunk:
+                    blocks.append({
+                        "type": "section",
+                        "text": {"type": "mrkdwn", "text": chunk},
+                    })
+
+        has_title = False
+        for line in briefing.splitlines():
+            heading = re.match(r"^(#{1,6})\s+(.*)$", line)
+            if heading:
+                level, title = len(heading.group(1)), inline_mrkdwn(heading.group(2))
+                if level == 1 and not has_title:
+                    plain_title = re.sub(r"[*_`]", "", title)
+                    blocks.append({
+                        "type": "header",
+                        "text": {
+                            "type": "plain_text",
+                            "text": plain_title[:150],
+                            "emoji": True,
+                        },
+                    })
+                    has_title = True
+                    continue
+                if level == 2:
+                    flush_body()
+                    blocks.extend([
+                        {"type": "divider"},
+                        {
+                            "type": "section",
+                            "text": {"type": "mrkdwn", "text": f"*{title}*"},
+                        },
+                    ])
+                else:
+                    body_lines.append(f"*{title}*")
+                continue
+
+            if line.startswith("> "):
+                line = f"_{inline_mrkdwn(line[2:])}_"
+            else:
+                line = inline_mrkdwn(line)
+                line = re.sub(r"^(\s*)- ", r"\1• ", line)
+            body_lines.append(line)
+        flush_body()
+
+        if not has_title:
+            blocks.insert(0, {
                 "type": "header",
                 "text": {
                     "type": "plain_text",
                     "text": "🛡️ Daily Security Briefing",
                     "emoji": True,
                 },
-            },
-            {
-                "type": "context",
-                "elements": [{
-                    "type": "mrkdwn",
-                    "text": f"{date_str}  ·  {len(top)} stories prioritized",
-                }],
-            },
-            {"type": "divider"},
-        ]
-
-        if watchlist_matches:
-            lines = ["*POSSIBLE WATCHLIST MATCHES*"]
-            for story in watchlist_matches[:3]:
-                hits = ", ".join(
-                    f"`{escape_mrkdwn(hit)}`" for hit in story.get("watchlist_hits", [])
-                )
-                lines.append(f"• {story_link(story)} — {hits}")
-            if len(watchlist_matches) > 3:
-                lines.append(f"_+{len(watchlist_matches) - 3} more in the full report_")
-            lines.append("_Text/product match only; exposure is not confirmed._")
-            blocks.append({
-                "type": "section",
-                "text": {"type": "mrkdwn", "text": "\n".join(lines)},
-            })
-            blocks.append({"type": "divider"})
-
-        blocks.append({
-            "type": "section",
-            "text": {"type": "mrkdwn", "text": "*TOP STORIES*"},
-        })
-        for index, story in enumerate(visible_stories, 1):
-            age_hours = story.get("age_hours")
-            age = f"{age_hours:.0f}h ago" if age_hours is not None else "age unknown"
-            details = [
-                f"*{index}. {story_link(story)}*",
-                f"{escape_mrkdwn(story.get('source', 'Unknown'))}  ·  {age}",
-            ]
-            cve_entries = story.get("cves", [])
-            if cve_entries:
-                cve_summaries = []
-                for cve in cve_entries[:3]:
-                    severity = escape_mrkdwn(cve.get("tag", "⚪ UNKNOWN"))
-                    cve_summaries.append(f"`{escape_mrkdwn(cve.get('id', 'CVE unknown'))}` {severity}")
-                details.append("CVEs: " + "  ·  ".join(cve_summaries))
-            blocks.append({
-                "type": "section",
-                "text": {"type": "mrkdwn", "text": "\n".join(details)},
             })
 
-        if self.ai_questions:
-            question_lines = ["*AI TRIAGE QUESTIONS*  _Verify before acting_"]
-            for question, story_ids in self.ai_questions[:4]:
-                citations = ", ".join(f"[{story_id}]" for story_id in story_ids)
-                question_lines.append(f"• {escape_mrkdwn(question)} {citations}")
-            blocks.extend([
-                {"type": "divider"},
-                {
-                    "type": "section",
-                    "text": {"type": "mrkdwn", "text": "\n".join(question_lines)},
-                },
-            ])
-
-        blocks.extend([
-            {"type": "divider"},
-            {
-                "type": "context",
-                "elements": [{
-                    "type": "mrkdwn",
-                    "text": "Publisher reports are unverified. Full evidence briefing saved locally.",
-                }],
-            },
-        ])
+        if len(blocks) > 50:
+            print(
+                "❌ Slack briefing exceeds the 50-block limit; "
+                "no partial report was sent."
+            )
+            return
 
         slack_message = {
-            "text": f"Daily Security Briefing — {date_str} ({len(top)} stories)",
+            "text": f"Daily Security Briefing — {date_str}",
             "blocks": blocks,
         }
         
