@@ -48,6 +48,7 @@ load_env_file()
 
 # Configuration
 DEFAULT_OUTPUT_DIR = Path(__file__).resolve().parent / "output"
+DEFAULT_GROQ_MODEL = "qwen/qwen3.6-27b"
 
 CONFIG = {
     "groq_api_key": os.getenv("GROQ_API_KEY", ""),
@@ -557,7 +558,7 @@ Rules:
 
         try:
             # Allow configuring model and endpoint via environment if needed
-            groq_model = os.getenv("GROQ_MODEL", "meta-llama/llama-4-scout-17b-16e-instruct")
+            groq_model = os.getenv("GROQ_MODEL", DEFAULT_GROQ_MODEL)
             groq_endpoint = os.getenv("GROQ_ENDPOINT", "https://api.groq.com/openai/v1/chat/completions")
 
             response = requests.post(

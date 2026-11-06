@@ -1,8 +1,10 @@
+import os
 import tempfile
 import unittest
 from pathlib import Path
+from unittest.mock import Mock, patch
 
-from cybersec_agent import CONFIG, CybersecNewsAgent
+from cybersec_agent import CONFIG, DEFAULT_GROQ_MODEL, CybersecNewsAgent
 from enrichment import VulnEnricher
 from tests.fakes import FakeHttp
 
@@ -52,6 +54,17 @@ class CybersecAgentTests(unittest.TestCase):
         self.assertIn("CRITICAL HIGHLIGHTS", prompt)
         self.assertIn("RECOMMENDED ACTIONS", prompt)
         self.assertIn("CVE-2026-12345", prompt)
+
+    def test_groq_request_uses_current_default_model(self):
+        response = Mock(
+            status_code=200,
+            json=lambda: {"choices": [{"message": {"content": "Briefing"}}]},
+        )
+        with patch.dict(os.environ, {"GROQ_API_KEY": "test-key"}, clear=True):
+            with patch("cybersec_agent.requests.post", return_value=response) as post:
+                self.assertEqual(self.agent.generate_ai_briefing(), "Briefing")
+
+        self.assertEqual(post.call_args.kwargs["json"]["model"], DEFAULT_GROQ_MODEL)
 
     def test_related_headlines_are_grouped_and_sources_are_retained(self):
         self.agent.stories = [
