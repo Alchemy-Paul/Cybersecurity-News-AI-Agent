@@ -6,7 +6,8 @@ This project automatically gathers cybersecurity news, prioritizes the most rele
 
 - Aggregates stories from Hacker News security searches and RSS feeds
 - Deduplicates and scores stories by engagement, recency, keyword relevance, and CVE impact
-- Enriches matching CVEs with severity tags from the NVD when available, with a heuristic fallback when the API is unavailable
+- Enriches CVEs with CISA KEV, EPSS and NVD data, showing `unknown` instead of guessing when a source is unavailable
+- Flags stories that affect the products on your watchlist
 - Extracts common IOCs from story titles and URLs, including IPv4s, domains, MD5, SHA256, and CVE IDs
 - Saves daily briefing reports in markdown and HTML format
 - Sends the briefing to Slack, email, or Discord when configured
@@ -23,7 +24,9 @@ This project automatically gathers cybersecurity news, prioritizes the most rele
 ## Repository layout
 
 - `cybersec_agent.py` — main application and CLI entry point
-- `tests/test_cybersec_agent.py` — unit tests for sanitization, prompt generation, relevance scoring, and CVE enrichment
+- `enrichment.py` — CISA KEV, EPSS and NVD lookups with an on-disk cache
+- `watchlist.py` — watchlist loading and matching
+- `tests/` — offline unit tests (the network is faked; no internet needed)
 - `output/briefings/` — generated markdown and HTML briefing files
 - `output/ioc_watchlists/` — IOC watchlist files grouped by date
 - `systemd/` — sample systemd service unit
@@ -104,6 +107,22 @@ pip install -r requirements.txt
 
 If `GROQ_API_KEY` is not set, the script falls back to a basic briefing automatically. You can also force the text-only fallback with `--no-ai`.
 
+## Vulnerability enrichment and "affects our stack"
+
+CVEs found in a story's title or summary are enriched from authoritative sources instead of guessed from the headline:
+
+- **CISA KEV** - is the CVE confirmed exploited in the wild (and used in ransomware)?
+- **FIRST EPSS** - probability of exploitation in the next 30 days
+- **NVD** - CVSS base score and the affected vendors/products
+
+Stories are ranked KEV first, then EPSS and CVSS, then everything else. Results are cached under `output/cache/`.
+
+If a source is unreachable the field is shown as `unknown` (never invented). In particular, `KEV: unknown` means the feed could not be checked, which is not the same as "not exploited". Without NVD data, severity is `unknown`; a headline-based hint may be shown but is labelled unverified.
+
+**Watchlist.** Copy `watchlist.example.txt` to `watchlist.txt` and list the vendors/products you run. Stories that mention them, or whose CVEs affect them (via NVD CPE or KEV data), are flagged **Affects Our Stack**, placed in their own briefing section and ranked above everything else. Use specific terms ("microsoft exchange", not "exchange").
+
+Set `NVD_API_KEY` (free) to raise the NVD rate limit. Use `--no-enrich` to skip all lookups, or `--watchlist PATH` to use another file.
+
 ## Runtime options
 
 ```bash
@@ -122,6 +141,8 @@ Command-line flags:
 - `--no-save`: Skip writing reports to disk
 - `--print-only`: Print the briefing to the terminal without saving or sending it
 - `--no-ai`: Disable Groq and use the basic briefing generator instead
+- `--no-enrich`: Skip KEV / EPSS / NVD lookups (CVE severity will be unknown)
+- `--watchlist`: Path to your watchlist file (default `watchlist.txt` or `WATCHLIST_FILE`)
 
 ## Output artifacts
 

@@ -1,0 +1,14 @@
+# Copy to watchlist.txt and list the vendors / products YOU run, one per line.
+# Stories and CVEs that mention (or affect) these are ranked first and flagged
+# "Affects Our Stack". Matching ignores case and punctuation, whole words only.
+#
+# Be specific: "exchange" alone would match plenty of unrelated news.
+
+fortinet
+fortios
+microsoft exchange
+citrix netscaler
+palo alto
+ivanti
+vmware esxi
+openssh
