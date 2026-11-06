@@ -1,4 +1,4 @@
-# Cybersecurity News AI Agent
+# Cybersecurity News Evidence Briefing Agent
 
 This project automatically gathers cybersecurity news, prioritizes stories for a SOC workflow, enriches CVEs, extracts potential indicators, and generates a source-grounded daily evidence briefing. It can print the briefing locally, save markdown and HTML reports, and deliver the result to Slack, email, or Discord.
 
@@ -204,5 +204,5 @@ Add a line similar to:
 - The script automatically creates the output folders if they do not already exist.
 - Story prioritization is based on keyword relevance, age, engagement, and detected CVE severity.
 - Closely related headlines are grouped into one story with contributing sources shown. Stories without a usable publication date are marked unknown and receive no freshness bonus.
-- When a CVE cannot be fetched from NVD, the agent assigns a heuristic severity tag to keep the briefing useful even during upstream issues.
+- When CVSS data is unavailable, the report keeps the score unknown; any headline-based severity hint is explicitly labeled unverified.
 - The project includes a small unittest suite to verify sanitization, evidence reporting, scoring behavior, and CVE fallback logic.

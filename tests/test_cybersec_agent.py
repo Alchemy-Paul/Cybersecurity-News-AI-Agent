@@ -107,7 +107,8 @@ class CybersecAgentTests(unittest.TestCase):
         )
         self.agent.stories = [grouped]
         briefing = self.agent.generate_evidence_briefing()
-        self.assertIn("Coverage: The Hacker News, BleepingComputer", briefing)
+        self.assertIn("Related coverage:", briefing)
+        self.assertIn("The Hacker News, BleepingComputer", briefing)
 
     def test_unknown_publication_date_is_not_treated_as_fresh(self):
         story = {
@@ -290,7 +291,7 @@ class CybersecAgentTests(unittest.TestCase):
         self.assertIn("## Possible Watchlist Matches (not confirmed exposure)", briefing)
         self.assertIn("CVSS unknown", briefing)
         self.assertNotIn("CVSS 9.8", briefing)
-        self.assertIn("unverified", briefing)
+        self.assertIn("Unverified headline severity hint", briefing)
 
 
 if __name__ == "__main__":
