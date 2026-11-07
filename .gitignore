@@ -6,5 +6,6 @@ __pycache__/
 *.pyd
 *.swp
 .DS_Store
-output/
+# Generated briefings, IOC reports, and enrichment cache.
+/output/
 watchlist.txt

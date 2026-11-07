@@ -2,6 +2,8 @@ from contextlib import redirect_stdout
 from io import StringIO
 import json
 import os
+import re
+import subprocess
 import sys
 import tempfile
 import unittest
@@ -95,6 +97,59 @@ class CybersecAgentTests(unittest.TestCase):
         self.assertEqual(output.getvalue(), "")
         post.assert_not_called()
         smtp.assert_not_called()
+
+    def test_print_only_suppresses_all_delivery_channels(self):
+        self.agent.config.update({
+            "print_only": True,
+            "send_to_slack": True,
+            "save_outputs": True,
+            "smtp_host": "smtp.example.com",
+            "smtp_from": "sender@example.com",
+            "smtp_to": "recipient@example.com",
+            "discord_webhook_url": "https://discord.example/webhook",
+        })
+        self.agent.fetch_all_news = Mock()
+        self.agent.tag_cve_stories = Mock()
+        self.agent.apply_watchlist = Mock()
+        self.agent.prioritize_stories = Mock()
+        self.agent.extract_iocs = Mock()
+        self.agent.generate_evidence_briefing = Mock(return_value="briefing")
+        self.agent.display_briefing = Mock()
+        self.agent.send_to_slack = Mock()
+        self.agent.send_to_email = Mock()
+        self.agent.send_to_discord = Mock()
+        self.agent.save_briefing = Mock()
+        self.agent.save_ioc_report = Mock()
+        self.agent.save_html_report = Mock()
+
+        with redirect_stdout(StringIO()):
+            self.agent.run()
+
+        self.agent.send_to_slack.assert_not_called()
+        self.agent.send_to_email.assert_not_called()
+        self.agent.send_to_discord.assert_not_called()
+        self.agent.save_briefing.assert_not_called()
+        self.agent.save_ioc_report.assert_not_called()
+        self.agent.save_html_report.assert_not_called()
+
+    def test_readme_cli_flags_match_help_output(self):
+        readme = Path(PROJECT_ROOT, "README.md").read_text(encoding="utf-8")
+        runtime_options = readme.split("## Runtime options", 1)[1].split(
+            "## Output artifacts", 1
+        )[0]
+        command_flags = runtime_options.split("Command-line flags:", 1)[1]
+        documented_flags = re.findall(
+            r"(?m)^\s*-\s+`(--[^`]+)`", command_flags
+        )
+        help_output = subprocess.run(
+            [sys.executable, str(Path(PROJECT_ROOT, "cybersec_agent.py")), "--help"],
+            check=True,
+            capture_output=True,
+            text=True,
+        ).stdout
+        cli_flags = re.findall(r"(?<!\S)--[a-z][a-z-]*\b", help_output)
+
+        self.assertCountEqual(documented_flags, cli_flags)
 
     def test_slack_delivery_preserves_report_and_formats_markdown_headings(self):
         self.agent.config["slack_webhook_url"] = "https://hooks.slack.test/example"

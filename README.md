@@ -28,18 +28,17 @@ This project automatically gathers cybersecurity news, prioritizes stories for a
 - `enrichment.py` — CISA KEV, EPSS and NVD lookups with an on-disk cache
 - `watchlist.py` — watchlist loading and matching
 - `tests/` — offline unit tests (the network is faked; no internet needed)
-- `output/briefings/` — generated markdown and HTML briefing files
-- `output/ioc_watchlists/` — IOC watchlist files grouped by date
+- `docs/screenshots/` — project screenshots
 - `systemd/` — sample systemd service unit
 - `cybersec-agent.cron` — sample cron entry
 
 ## Screenshots
 
-![Cybersecurity briefing output](Cybersecurity-new-agent.png)
+![Cybersecurity briefing output](docs/screenshots/Cybersecurity-new-agent.png)
 
-![CVE enrichment and scoring](2026-06-06_22-46.png)
+![CVE enrichment and scoring](docs/screenshots/2026-06-06_22-46.png)
 
-![IOC watchlist report](2026-06-06_23-49.png)
+![IOC watchlist report](docs/screenshots/2026-06-06_23-49.png)
 
 ## Prerequisites
 
@@ -135,15 +134,16 @@ Set `NVD_API_KEY` (free) to raise the NVD rate limit. Use `--no-enrich` to skip 
 
 Command-line flags:
 
+- `--help`: Show the available options and exit
 - `--output-dir`: Set the output directory for generated briefing and IOC files
 - `--max-stories`: Limit the number of stories included in the briefing
 - `--no-slack`: Disable Slack delivery
 - `--no-save`: Skip writing briefing, HTML, and IOC report files; enrichment cache data may still be written
-- `--print-only`: Print without saving reports or sending to Slack. Configured email and Discord delivery still run
+- `--print-only`: Print the briefing without saving reports or sending it to Slack, email, or Discord
 - `--no-enrich`: Skip KEV / EPSS / NVD lookups (CVE severity will be unknown)
 - `--watchlist`: Path to your watchlist file (default `watchlist.txt` or `WATCHLIST_FILE`)
 
-`--no-slack` disables only Slack delivery. Email and Discord are sent when their required settings are configured.
+`--no-slack` disables only Slack delivery. Email and Discord are sent when their required settings are configured, unless `--print-only` is set.
 
 ## Output artifacts
 

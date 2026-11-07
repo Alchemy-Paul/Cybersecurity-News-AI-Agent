@@ -1170,18 +1170,17 @@ class CybersecNewsAgent:
         # Display
         self.display_briefing(briefing)
 
-        # Send to Slack
-        if self.config.get("send_to_slack", True):
-            self.send_to_slack(briefing)
+        if not self.config.get("print_only", False):
+            if self.config.get("send_to_slack", True):
+                self.send_to_slack(briefing)
 
-        # Optional delivery channels remain silent when not configured.
-        if all(self.config.get(key) for key in ("smtp_host", "smtp_from", "smtp_to")):
-            self.send_to_email(briefing)
-        if self.config.get("discord_webhook_url"):
-            self.send_to_discord(briefing)
+            if all(self.config.get(key) for key in ("smtp_host", "smtp_from", "smtp_to")):
+                self.send_to_email(briefing)
+            if self.config.get("discord_webhook_url"):
+                self.send_to_discord(briefing)
 
         # Save
-        if self.config.get("save_outputs", True):
+        if self.config.get("save_outputs", True) and not self.config.get("print_only", False):
             filepath = self.save_briefing(briefing)
             self.save_ioc_report()
             self.save_html_report(briefing)
@@ -1243,6 +1242,7 @@ def main():
     CONFIG["max_story_count"] = args.max_stories
     CONFIG["send_to_slack"] = not args.no_slack and not args.print_only
     CONFIG["save_outputs"] = not args.no_save and not args.print_only
+    CONFIG["print_only"] = args.print_only
     CONFIG["enrich"] = not args.no_enrich
     if args.watchlist:
         CONFIG["watchlist_file"] = args.watchlist
