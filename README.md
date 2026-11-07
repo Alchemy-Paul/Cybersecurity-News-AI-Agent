@@ -18,7 +18,7 @@ This project automatically gathers cybersecurity news, prioritizes stories for a
 - Deterministic evidence reporting from fetched stories and structured CVE enrichment
 - Optional Groq AI triage questions, constrained to questions with valid story citations; AI output is labeled as unverified hypotheses and is not remediation advice
 - Publisher headlines and summaries are attributed to their source; CVE enrichment includes direct links to official records and identifies unavailable data
-- Daily archive folders under the configured output directory
+- Date-named briefing and IOC files under the configured output directory; another run on the same day replaces those files
 - Optional scheduler file generation via environment variables
 - CLI switches for output directory, story count, saving, and print-only mode
 
@@ -116,7 +116,7 @@ CVEs found in a story's title or summary are enriched from authoritative sources
 - **FIRST EPSS** - probability of exploitation in the next 30 days
 - **NVD** - CVSS base score and the affected vendors/products
 
-Stories are ranked KEV first, then EPSS and CVSS, then everything else. Results are cached under `output/cache/`.
+Stories are sorted by a weighted relevance score. Watchlist matches and KEV-listed CVEs receive large boosts; CVE presence, EPSS, CVSS severity, recency, keywords, and (for Hacker News) engagement also contribute. This is prioritization, not a strict severity ordering. Results are cached under `<output-dir>/cache/`.
 
 If a source is unreachable the field is shown as `unknown` (never invented). In particular, `KEV: unknown` means the feed could not be checked, which is not the same as "not exploited". Without NVD data, severity is `unknown`; a headline-based hint may be shown but is labelled unverified.
 
@@ -138,10 +138,12 @@ Command-line flags:
 - `--output-dir`: Set the output directory for generated briefing and IOC files
 - `--max-stories`: Limit the number of stories included in the briefing
 - `--no-slack`: Disable Slack delivery
-- `--no-save`: Skip writing reports to disk
-- `--print-only`: Print the briefing to the terminal without saving or sending it
+- `--no-save`: Skip writing briefing, HTML, and IOC report files; enrichment cache data may still be written
+- `--print-only`: Print without saving reports or sending to Slack. Configured email and Discord delivery still run
 - `--no-enrich`: Skip KEV / EPSS / NVD lookups (CVE severity will be unknown)
 - `--watchlist`: Path to your watchlist file (default `watchlist.txt` or `WATCHLIST_FILE`)
+
+`--no-slack` disables only Slack delivery. Email and Discord are sent when their required settings are configured.
 
 ## Output artifacts
 
@@ -169,33 +171,40 @@ The application reads the following variables from the environment or a `.env` f
 - `SMTP_FROM`
 - `SMTP_TO`
 - `DISCORD_WEBHOOK_URL`
+- `NVD_API_KEY`
+- `WATCHLIST_FILE`
 - `CRON_SCHEDULE`
 - `GENERATE_SCHEDULER_FILES`
 
-These control the AI analysis endpoint, output location, delivery channels, and scheduler generation behavior.
+These control the AI triage endpoint, output location, delivery channels, vulnerability lookups, watchlist path, and scheduler generation behavior.
 
 ## Scheduler setup
 
 You can generate sample cron and systemd files automatically:
 
 ```bash
-GENERATE_SCHEDULER_FILES=1 .venv/bin/python cybersec_agent.py
+OUTPUT_DIR=/path/to/cybersec-agent \
+GENERATE_SCHEDULER_FILES=1 .venv/bin/python cybersec_agent.py --output-dir /path/to/cybersec-agent
 ```
 
-This writes sample files to the configured output directory, including:
+This writes files to the configured output directory:
 
 - `systemd/cybersec-agent.service`
 - `cybersec-agent.cron`
 
-Example systemd activation:
+The generated service and cron entry assume `cybersec_agent.py` is in the configured output directory. Set that directory to your project checkout (the directory containing the script), or edit the generated paths to point to your checkout before activating them.
+
+Example systemd activation after reviewing the generated service:
 
 ```bash
-sudo cp systemd/cybersec-agent.service /etc/systemd/system/
+sudo cp /path/to/cybersec-agent/systemd/cybersec-agent.service /etc/systemd/system/
 sudo systemctl daemon-reload
 sudo systemctl enable --now cybersec-agent.service
 ```
 
 Example cron entry:
+
+The generated `cybersec-agent.cron` includes a username and is formatted for a system cron file such as `/etc/cron.d/cybersec-agent`. For `crontab -e`, use the user-crontab format below, without the username field.
 
 ```bash
 crontab -e
@@ -210,7 +219,7 @@ Add a line similar to:
 ## Notes
 
 - The script automatically creates the output folders if they do not already exist.
-- Story prioritization is based on keyword relevance, age, engagement, and detected CVE severity.
+- Story prioritization uses a weighted score based on watchlist matches, KEV/EPSS/CVSS data, CVE presence, keyword relevance, age, and engagement.
 - Closely related headlines are grouped into one story with contributing sources shown. Stories without a usable publication date are marked unknown and receive no freshness bonus.
 - When CVSS data is unavailable, the report keeps the score unknown; any headline-based severity hint is explicitly labeled unverified.
 - The project includes a small unittest suite to verify sanitization, evidence reporting, scoring behavior, and CVE fallback logic.
