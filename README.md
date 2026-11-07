@@ -4,8 +4,8 @@ This project automatically gathers cybersecurity news, prioritizes stories for a
 
 ## What it does
 
-- Aggregates CISA KEV additions and Microsoft, Cisco, and Fortinet advisories, with Hacker News and security-news RSS feeds as supplementary coverage
-- Retries transient feed and vulnerability-lookup failures with exponential backoff and reports failures through Python logging
+- Aggregates newly added CISA KEV entries and Microsoft, Cisco, and Fortinet advisories, with Hacker News and security-news RSS feeds as supplementary coverage
+- Retries transient feed and vulnerability-lookup request failures up to three attempts with exponential backoff, and reports operational status through Python logging
 - Groups closely related headlines, preserves their source coverage, and scores stories by engagement, known recency, keyword relevance, and CVE impact
 - Enriches CVEs with CISA KEV, EPSS and NVD data, showing `unknown` instead of guessing when a source is unavailable
 - Flags possible watchlist matches without claiming that the product is deployed or affected
@@ -13,6 +13,12 @@ This project automatically gathers cybersecurity news, prioritizes stories for a
 - Saves daily briefing reports in markdown and HTML format
 - Sends the briefing to Slack, email, or Discord when configured
 - Supports scheduler generation for systemd and cron-based automation
+
+## News sources
+
+CISA's Known Exploited Vulnerabilities (KEV) catalog is a primary source. Each run includes up to 12 of its most recently added entries. Vendor advisory feeds are provided by the Microsoft Security Response Center, Cisco Security Advisories, and Fortinet PSIRT. Supplementary coverage comes from one Hacker News security search and RSS feeds from Cybersecurity News, The Hacker News, BleepingComputer, and Securelist.
+
+Feed and enrichment HTTP requests are tried up to three times total. Between attempts, the agent waits 1 second and then 2 seconds. If all attempts fail, the failure is logged and processing continues with the remaining sources; unavailable enrichment remains unknown rather than being inferred. When run from the command line, the agent configures INFO-level logging. The briefing itself is still printed to the terminal.
 
 ## Core features
 
@@ -118,7 +124,7 @@ CVEs found in a story's title or summary are enriched from authoritative sources
 
 Stories are sorted by a weighted relevance score. Watchlist matches and KEV-listed CVEs receive large boosts; CVE presence, EPSS, CVSS severity, recency, keywords, and (for Hacker News) engagement also contribute. This is prioritization, not a strict severity ordering. Results are cached under `<output-dir>/cache/`.
 
-If a source is unreachable the field is shown as `unknown` (never invented). In particular, `KEV: unknown` means the feed could not be checked, which is not the same as "not exploited". The CISA KEV catalog is also ingested as a primary news source. Feed and enrichment requests retry transient failures up to three times with exponential backoff; exhausted failures are logged and do not prevent other sources from being processed. Without NVD data, severity is `unknown`; a headline-based hint may be shown but is labelled unverified.
+If a source is unreachable the field is shown as `unknown` (never invented). In particular, `KEV: unknown` means the feed could not be checked, which is not the same as "not exploited". Without NVD data, severity is `unknown`; a headline-based hint may be shown but is labelled unverified.
 
 **Watchlist.** Copy `watchlist.example.txt` to `watchlist.txt` and list the vendors/products you run. Stories that mention them, or whose CVEs affect them (via NVD CPE or KEV data), are marked as possible matches and ranked higher. A match is not confirmation that a product is deployed or affected. Use specific terms ("microsoft exchange", not "exchange").
 
@@ -153,7 +159,7 @@ The script creates these folders automatically when needed:
 - `output/briefings/` — markdown and HTML briefing reports named like `briefing_YYYY-MM-DD.md` and `briefing_YYYY-MM-DD.html`
 - `output/ioc_watchlists/` — candidate IOC reference files extracted from news titles and URLs; validate them before detection or blocking use
 
-Each run also prints a summary of extracted IOCs and the final output paths.
+Each run logs a summary of extracted IOCs and the final output paths.
 
 ## Environment variables
 
