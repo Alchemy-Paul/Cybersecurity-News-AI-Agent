@@ -23,7 +23,7 @@ Feed and enrichment HTTP requests are tried up to three times total. Between att
 ## Core features
 
 - Deterministic evidence reporting from fetched stories and structured CVE enrichment
-- Optional Groq AI triage questions, constrained to questions with valid story citations; AI output is labeled as unverified hypotheses and is not remediation advice
+- Optional Groq AI triage questions, constrained to valid story citations and checked against enriched CVE IDs, CVSS scores, and severity; AI output remains separate from verified data and is labeled as unverified hypotheses, not remediation advice
 - Publisher headlines and summaries are attributed to their source; CVE enrichment includes direct links to official records and identifies unavailable data
 - Date-named briefing and IOC files under the configured output directory; another run on the same day replaces those files
 - Optional scheduler file generation via environment variables
@@ -112,7 +112,7 @@ pip install -r requirements.txt
 .venv/bin/python cybersec_agent.py
 ```
 
-The report’s evidence section is deterministic. If `GROQ_API_KEY` is configured, Groq adds a clearly separated section of AI-generated triage questions with validated story citations. These are hypotheses, not confirmed findings or remediation instructions. If no key is configured or the API fails, the evidence briefing is still generated without AI questions.
+The report’s evidence section is deterministic. If `GROQ_API_KEY` is configured, Groq may add a clearly separated section of AI-generated triage questions with validated story citations. Publisher-provided text is treated as untrusted input, and generated questions containing CVE IDs, severity labels, or CVSS scores absent from that story’s enrichment are rejected. The questions remain separate from verified CVE data and are hypotheses, not confirmed findings or remediation instructions. If no key is configured or the API fails, the evidence briefing is still generated without AI questions.
 
 ## Vulnerability enrichment and "affects our stack"
 
