@@ -4,7 +4,8 @@ This project automatically gathers cybersecurity news, prioritizes stories for a
 
 ## What it does
 
-- Aggregates stories from Hacker News security searches and RSS feeds
+- Aggregates CISA KEV additions and Microsoft, Cisco, and Fortinet advisories, with Hacker News and security-news RSS feeds as supplementary coverage
+- Retries transient feed and vulnerability-lookup failures with exponential backoff and reports failures through Python logging
 - Groups closely related headlines, preserves their source coverage, and scores stories by engagement, known recency, keyword relevance, and CVE impact
 - Enriches CVEs with CISA KEV, EPSS and NVD data, showing `unknown` instead of guessing when a source is unavailable
 - Flags possible watchlist matches without claiming that the product is deployed or affected
@@ -117,7 +118,7 @@ CVEs found in a story's title or summary are enriched from authoritative sources
 
 Stories are sorted by a weighted relevance score. Watchlist matches and KEV-listed CVEs receive large boosts; CVE presence, EPSS, CVSS severity, recency, keywords, and (for Hacker News) engagement also contribute. This is prioritization, not a strict severity ordering. Results are cached under `<output-dir>/cache/`.
 
-If a source is unreachable the field is shown as `unknown` (never invented). In particular, `KEV: unknown` means the feed could not be checked, which is not the same as "not exploited". Without NVD data, severity is `unknown`; a headline-based hint may be shown but is labelled unverified.
+If a source is unreachable the field is shown as `unknown` (never invented). In particular, `KEV: unknown` means the feed could not be checked, which is not the same as "not exploited". The CISA KEV catalog is also ingested as a primary news source. Feed and enrichment requests retry transient failures up to three times with exponential backoff; exhausted failures are logged and do not prevent other sources from being processed. Without NVD data, severity is `unknown`; a headline-based hint may be shown but is labelled unverified.
 
 **Watchlist.** Copy `watchlist.example.txt` to `watchlist.txt` and list the vendors/products you run. Stories that mention them, or whose CVEs affect them (via NVD CPE or KEV data), are marked as possible matches and ranked higher. A match is not confirmation that a product is deployed or affected. Use specific terms ("microsoft exchange", not "exchange").
 

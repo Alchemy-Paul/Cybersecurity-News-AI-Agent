@@ -7,11 +7,13 @@ Perfect for busy SOC analysts
 
 import argparse
 import html
+import logging
 import os
 import re
 import smtplib
 import sys
 import json
+import time
 import requests
 import feedparser
 from difflib import SequenceMatcher
@@ -21,7 +23,7 @@ from email.message import EmailMessage
 from email.utils import parsedate_to_datetime
 from pathlib import Path
 
-from enrichment import VulnEnricher, extract_cve_ids, severity_from_score
+from enrichment import KEV_URL, VulnEnricher, extract_cve_ids, severity_from_score
 from watchlist import load_watchlist, match_watchlist
 
 
@@ -46,21 +48,40 @@ def load_env_file(path=".env"):
 
 load_env_file()
 
+logger = logging.getLogger(__name__)
+
 # Configuration
 DEFAULT_OUTPUT_DIR = Path(__file__).resolve().parent / "output"
 DEFAULT_GROQ_MODEL = "openai/gpt-oss-120b"
 DEFAULT_GROQ_ENDPOINT = "https://api.groq.com/openai/v1/chat/completions"
+FEED_RETRY_ATTEMPTS = 3
+FEED_RETRY_BACKOFF = 1
 
 CONFIG = {
     "news_sources": [
         {
-            "name": "Hacker News - Security",
-            "url": "https://hn.algolia.com/api/v1/search?tags=story&query=cybersecurity,security,vulnerability,breach,exploit",
-            "type": "hn"
+            "name": "CISA Known Exploited Vulnerabilities",
+            "url": KEV_URL,
+            "type": "kev"
         },
         {
-            "name": "Hacker News - CVE",
-            "url": "https://hn.algolia.com/api/v1/search?tags=story&query=CVE,zero-day,vulnerability,patch",
+            "name": "Microsoft Security Response Center",
+            "url": "https://api.msrc.microsoft.com/update-guide/rss",
+            "type": "rss"
+        },
+        {
+            "name": "Cisco Security Advisories",
+            "url": "https://sec.cloudapps.cisco.com/security/center/psirtrss20/CiscoSecurityAdvisory.xml",
+            "type": "rss"
+        },
+        {
+            "name": "Fortinet PSIRT Advisories",
+            "url": "https://www.fortiguard.com/rss/ir.xml",
+            "type": "rss"
+        },
+        {
+            "name": "Hacker News - Security (community discussion)",
+            "url": "https://hn.algolia.com/api/v1/search?tags=story&query=cybersecurity,security,vulnerability,breach,exploit",
             "type": "hn"
         },
         {
@@ -125,7 +146,7 @@ class CybersecNewsAgent:
         """Ask Groq for cited questions, not factual claims or remediation commands."""
         api_key = os.getenv("GROQ_API_KEY", "")
         if not api_key:
-            print("ℹ️  GROQ_API_KEY is not set; skipping AI triage questions.")
+            logger.info("GROQ_API_KEY is not set; skipping AI triage questions.")
             return []
 
         evidence = []
@@ -180,13 +201,13 @@ class CybersecNewsAgent:
                 timeout=30,
             )
         except requests.RequestException as exc:
-            print(f"⚠️  Groq triage-question request failed: {exc}")
+            logger.warning("Groq triage-question request failed: %s", exc)
             return []
 
         if response.status_code != 200:
-            print(
-                f"⚠️  Groq triage-question request failed with HTTP "
-                f"{response.status_code}; using the evidence-only briefing."
+            logger.warning(
+                "Groq triage-question request failed with HTTP %s; "
+                "using the evidence-only briefing.", response.status_code
             )
             return []
 
@@ -194,12 +215,12 @@ class CybersecNewsAgent:
             content = response.json()["choices"][0]["message"]["content"]
             result = json.loads(content)
         except (KeyError, IndexError, TypeError, ValueError) as exc:
-            print(f"⚠️  Could not parse Groq triage-question response: {exc}")
+            logger.warning("Could not parse Groq triage-question response: %s", exc)
             return []
 
         raw_questions = result.get("questions") if isinstance(result, dict) else None
         if not isinstance(raw_questions, list):
-            print("⚠️  Groq response did not contain a questions list; skipping AI section.")
+            logger.warning("Groq response did not contain a questions list; skipping AI section.")
             return []
 
         valid_ids = set(range(1, len(stories) + 1))
@@ -226,7 +247,7 @@ class CybersecNewsAgent:
     def fetch_hackernews(self, source):
         """Fetch stories from Hacker News API"""
         try:
-            response = requests.get(source["url"], timeout=10)
+            response = self._get_with_retries(source["url"], timeout=10)
             data = response.json()
             
             for hit in data.get("hits", [])[:10]:
@@ -238,14 +259,16 @@ class CybersecNewsAgent:
                     "comments": hit.get("num_comments", 0),
                     "created": hit.get("created_at", "")
                 })
-        except Exception as e:
-            print(f"Error fetching {source['name']}: {e}")
+        except (requests.RequestException, ValueError) as exc:
+            logger.error("Could not fetch %s: %s", source["name"], exc)
     
     def fetch_reddit(self, source):
         """Fetch posts from Reddit"""
         try:
             headers = {"User-Agent": "CybersecNewsAgent/1.0"}
-            response = requests.get(source["url"], headers=headers, timeout=10)
+            response = self._get_with_retries(
+                source["url"], headers=headers, timeout=10
+            )
             data = response.json()
             
             for post in data.get("data", {}).get("children", [])[:10]:
@@ -258,14 +281,79 @@ class CybersecNewsAgent:
                     "comments": post_data.get("num_comments", 0),
                     "created": datetime.fromtimestamp(post_data.get("created_utc", 0)).isoformat()
                 })
-        except Exception as e:
-            print(f"Error fetching {source['name']}: {e}")
+        except (requests.RequestException, ValueError) as exc:
+            logger.error("Could not fetch %s: %s", source["name"], exc)
+
+    def _get_with_retries(self, url, **kwargs):
+        """GET a feed with bounded exponential backoff for transient HTTP errors."""
+        for attempt in range(FEED_RETRY_ATTEMPTS):
+            try:
+                response = requests.get(url, **kwargs)
+                response.raise_for_status()
+                return response
+            except requests.RequestException as exc:
+                if attempt + 1 == FEED_RETRY_ATTEMPTS:
+                    raise
+                delay = FEED_RETRY_BACKOFF * (2 ** attempt)
+                logger.warning(
+                    "GET %s failed (attempt %s/%s): %s; retrying in %s seconds",
+                    url, attempt + 1, FEED_RETRY_ATTEMPTS, exc, delay
+                )
+                time.sleep(delay)
+
+    def fetch_kev(self, source):
+        """Fetch recently added CISA KEV records as authoritative news stories."""
+        try:
+            response = self._get_with_retries(source["url"], timeout=10)
+            vulnerabilities = response.json().get("vulnerabilities", [])
+            latest = sorted(
+                vulnerabilities,
+                key=lambda item: item.get("dateAdded", ""),
+                reverse=True,
+            )[:12]
+            for item in latest:
+                cve_id = item.get("cveID", "")
+                vendor_product = " ".join(
+                    value for value in (
+                        item.get("vendorProject", ""), item.get("product", "")
+                    ) if value
+                )
+                title = item.get("vulnerabilityName") or (
+                    f"{vendor_product} {cve_id} added to CISA KEV"
+                )
+                if cve_id and item.get("vulnerabilityName"):
+                    title = f"{title} ({cve_id})"
+                details = [
+                    f"CVE: {cve_id}" if cve_id else "",
+                    item.get("vulnerabilityName", ""),
+                    f"Affected product: {vendor_product}" if vendor_product else "",
+                    f"Required action: {item['requiredAction']}"
+                    if item.get("requiredAction") else "",
+                    f"Due date: {item['dueDate']}" if item.get("dueDate") else "",
+                ]
+                self.stories.append({
+                    "title": title,
+                    "url": (
+                        "https://www.cisa.gov/known-exploited-vulnerabilities-catalog"
+                        f"?search={cve_id}"
+                    ),
+                    "source": source["name"],
+                    "points": 0,
+                    "comments": 0,
+                    "created": item.get("dateAdded", ""),
+                    "summary": " ".join(value for value in details if value),
+                })
+        except (requests.RequestException, ValueError, TypeError, AttributeError) as exc:
+            logger.error("Could not fetch %s: %s", source["name"], exc)
     
     def fetch_rss(self, source):
         """Fetch stories from RSS feeds"""
         try:
-            response = requests.get(source["url"], timeout=10, headers={"User-Agent": "CybersecNewsAgent/1.0"})
-            response.raise_for_status()
+            response = self._get_with_retries(
+                source["url"],
+                timeout=10,
+                headers={"User-Agent": "CybersecNewsAgent/1.0"},
+            )
 
             import feedparser
             feed = feedparser.parse(response.content)
@@ -281,14 +369,14 @@ class CybersecNewsAgent:
                     "summary": entry.get("summary", "")
                 })
         except requests.RequestException as exc:
-            print(
-                f"⚠️  Could not reach {source['name']} RSS; skipping it and "
-                f"continuing with other feeds. ({exc})"
+            logger.error(
+                "Could not reach %s RSS after retries; skipping it and "
+                "continuing with other feeds: %s", source["name"], exc
             )
-        except Exception as exc:
-            print(
-                f"⚠️  Could not process {source['name']} RSS; skipping it and "
-                f"continuing with other feeds. ({exc})"
+        except (ValueError, TypeError, AttributeError) as exc:
+            logger.exception(
+                "Could not process %s RSS; skipping it and continuing with "
+                "other feeds: %s", source["name"], exc
             )
 
     def fetch_story_summary(self, url):
@@ -493,18 +581,20 @@ class CybersecNewsAgent:
 
         duplicates = len(self.stories) - len(unique)
         if duplicates > 0:
-            print(f"🔁 Grouped {duplicates} duplicate or closely related stories")
+            logger.info("Grouped %s duplicate or closely related stories", duplicates)
         self.stories = unique
 
     def fetch_all_news(self):
         """Fetch news from all configured sources"""
-        print("🔍 Fetching latest cybersecurity news...")
+        logger.info("Fetching latest cybersecurity news...")
         
         for source in self.config["news_sources"]:
             if source["type"] == "hn":
                 self.fetch_hackernews(source)
             elif source["type"] == "rss":
                 self.fetch_rss(source)
+            elif source["type"] == "kev":
+                self.fetch_kev(source)
         
         self.deduplicate_stories()
         for story in self.stories:
@@ -512,7 +602,7 @@ class CybersecNewsAgent:
 
         # Sort by relevance (initial points) before deeper prioritization
         self.stories.sort(key=lambda x: x.get("points", 0), reverse=True)
-        print(f"✅ Found {len(self.stories)} stories")
+        logger.info("Found %s stories", len(self.stories))
     
     def score_story_relevance(self, story, return_reasons=False):
         """Score stories based on engagement, recency, CVEs, severity, and keyword relevance."""
@@ -602,7 +692,7 @@ class CybersecNewsAgent:
     
     def generate_evidence_briefing(self):
         """Render verified-source data and optional, clearly labeled AI questions."""
-        print("🧾 Building the evidence briefing...")
+        logger.info("Building the evidence briefing...")
         briefing = "# Cybersecurity Daily Evidence Briefing\n\n"
         briefing += f"**Generated:** {datetime.now().strftime('%Y-%m-%d %H:%M')}\n\n"
         briefing += (
@@ -728,7 +818,7 @@ class CybersecNewsAgent:
         """Extract Indicators of Compromise from story titles and URLs"""
         import re
         
-        print("🔍 Extracting IOCs from stories...")
+        logger.info("Extracting IOCs from stories...")
         
         # Patterns for common IOCs
         patterns = {
@@ -751,7 +841,9 @@ class CybersecNewsAgent:
             "www.cybersecuritynews.com", "feeds.feedburner.com",
             "thehackernews.com", "www.thehackernews.com",
             "bleepingcomputer.com", "www.bleepingcomputer.com",
-            "securelist.com", "www.securelist.com"
+            "securelist.com", "www.securelist.com",
+            "cisa.gov", "www.cisa.gov", "msrc.microsoft.com",
+            "sec.cloudapps.cisco.com", "fortiguard.com", "www.fortiguard.com"
         }
         
         iocs = {
@@ -778,12 +870,14 @@ class CybersecNewsAgent:
         # Print summary
         total = sum(len(v) for v in self.iocs.values())
         if total > 0:
-            print(f"✅ Extracted {total} candidate IOC references from news metadata:")
+            logger.info(
+                "Extracted %s candidate IOC references from news metadata:", total
+            )
             for ioc_type, values in self.iocs.items():
                 if values:
-                    print(f"  {ioc_type.upper()}: {len(values)} found")
+                    logger.info("%s: %s found", ioc_type.upper(), len(values))
         else:
-            print("  No IOCs found in current stories")
+            logger.info("No IOCs found in current stories")
         
         return self.iocs
 
@@ -804,7 +898,7 @@ class CybersecNewsAgent:
                         f.write(f"{ioc}\n")
                     f.write("\n")
         
-        print(f"💾 IOC watchlist saved to: {filename}")
+        logger.info("IOC watchlist saved to: %s", filename)
         return filename
 
     def infer_severity_hint(self, title="", summary=""):
@@ -869,7 +963,7 @@ class CybersecNewsAgent:
     def tag_cve_stories(self):
         """Find CVE IDs in each story (title and summary) and enrich them with
         KEV, EPSS and NVD data. Must run before scoring so the data counts."""
-        print("🔎 Scanning for CVEs and enriching with KEV / EPSS / NVD...")
+        logger.info("Scanning for CVEs and enriching with KEV / EPSS / NVD...")
 
         per_story = {}
         for index, story in enumerate(self.stories):
@@ -887,7 +981,9 @@ class CybersecNewsAgent:
                 for cve_id in ids
             ]
             for entry in story["cves"]:
-                print(f"  {self.describe_cve(entry)} — {story['title'][:60]}...")
+                logger.info(
+                    "%s — %s...", self.describe_cve(entry), story["title"][:60]
+                )
 
     def apply_watchlist(self):
         """Flag stories that mention, or whose CVEs affect, products on the watchlist."""
@@ -907,7 +1003,10 @@ class CybersecNewsAgent:
             story["watchlist_hits"] = hits
             if hits:
                 flagged += 1
-        print(f"🎯 {flagged} stories match your watchlist ({len(self.watchlist)} terms)")
+        logger.info(
+            "%s stories match your watchlist (%s terms)",
+            flagged, len(self.watchlist)
+        )
 
     def save_briefing(self, briefing):
         """Save briefing to file"""
@@ -920,7 +1019,7 @@ class CybersecNewsAgent:
             f.write("---\n\n")
             f.write(briefing)
 
-        print(f"\n💾 Briefing saved to: {filename}")
+        logger.info("Briefing saved to: %s", filename)
         return filename
 
     def save_html_report(self, briefing):
@@ -963,7 +1062,7 @@ class CybersecNewsAgent:
         with open(filename, "w", encoding="utf-8") as f:
             f.write(html_body)
 
-        print(f"🌐 HTML report saved to: {filename}")
+        logger.info("HTML report saved to: %s", filename)
         return filename
 
     def send_to_email(self, briefing):
@@ -991,9 +1090,9 @@ class CybersecNewsAgent:
                     server.login(smtp_user, smtp_password)
                 server.send_message(msg)
 
-            print("✅ Briefing sent to email successfully!")
+            logger.info("Briefing sent to email successfully")
         except Exception as e:
-            print(f"❌ Error sending email: {e}")
+            logger.error("Error sending email: %s", e)
 
     def send_to_discord(self, briefing):
         """Send the briefing to Discord via webhook when configured."""
@@ -1005,17 +1104,22 @@ class CybersecNewsAgent:
             payload = {"content": briefing[:1900]}
             response = requests.post(webhook_url, json=payload, timeout=10)
             if response.status_code in {200, 204}:
-                print("✅ Briefing sent to Discord successfully!")
+                logger.info("Briefing sent to Discord successfully")
             else:
-                print(f"❌ Discord error: {response.status_code} - {response.text}")
+                logger.error(
+                    "Discord error: %s - %s", response.status_code, response.text
+                )
         except Exception as e:
-            print(f"❌ Error sending to Discord: {e}")
+            logger.error("Error sending to Discord: %s", e)
 
     def send_to_slack(self, briefing):
         """Send the complete briefing with Markdown headings adapted for Slack."""
         webhook_url = self.config.get("slack_webhook_url", "")
         if not webhook_url:
-            print("⚠️  No Slack webhook URL configured. Set SLACK_WEBHOOK_URL in your environment or .env file.")
+            logger.warning(
+                "No Slack webhook URL configured. Set SLACK_WEBHOOK_URL in your "
+                "environment or .env file."
+            )
             return
 
         date_str = datetime.now().strftime("%b %d, %Y")
@@ -1109,9 +1213,8 @@ class CybersecNewsAgent:
             })
 
         if len(blocks) > 50:
-            print(
-                "❌ Slack briefing exceeds the 50-block limit; "
-                "no partial report was sent."
+            logger.error(
+                "Slack briefing exceeds the 50-block limit; no partial report was sent."
             )
             return
 
@@ -1127,11 +1230,13 @@ class CybersecNewsAgent:
                 timeout=10
             )
             if response.status_code == 200:
-                print("✅ Briefing sent to Slack successfully!")
+                logger.info("Briefing sent to Slack successfully")
             else:
-                print(f"❌ Slack error: {response.status_code} - {response.text}")
+                logger.error(
+                    "Slack error: %s - %s", response.status_code, response.text
+                )
         except Exception as e:
-            print(f"❌ Error sending to Slack: {e}")
+            logger.error("Error sending to Slack: %s", e)
 
     def display_briefing(self, briefing):
         """Display briefing in terminal"""
@@ -1143,13 +1248,13 @@ class CybersecNewsAgent:
     
     def run(self):
         """Main execution flow"""
-        print("🛡️  Cybersecurity News Briefing Agent Starting...\n")
+        logger.info("Cybersecurity News Briefing Agent starting")
         
         # Fetch news
         self.fetch_all_news()
         
         if not self.stories:
-            print("❌ No stories found. Check your internet connection.")
+            logger.error("No stories found. Check your internet connection.")
             return
         
         # Enrich first (CVEs, KEV, EPSS, watchlist) so prioritisation can use it
@@ -1164,7 +1269,7 @@ class CybersecNewsAgent:
         # Generate briefing content
         briefing = self.generate_evidence_briefing()
         if not briefing:
-            print("❌ Failed to generate briefing.")
+            logger.error("Failed to generate briefing.")
             return
 
         # Display
@@ -1185,9 +1290,9 @@ class CybersecNewsAgent:
             self.save_ioc_report()
             self.save_html_report(briefing)
         
-        print(f"\n✅ Done! Your briefing is ready.")
-        print(f"📁 Briefings: {self.config['briefing_dir']}")
-        print(f"📁 IOC watchlists: {self.config['ioc_dir']}")
+        logger.info("Done! Your briefing is ready.")
+        logger.info("Briefings: %s", self.config["briefing_dir"])
+        logger.info("IOC watchlists: %s", self.config["ioc_dir"])
 
 
 def parse_args():
@@ -1230,12 +1335,16 @@ WantedBy=multi-user.target
     (service_dir / "cybersec-agent.service").write_text(systemd_unit, encoding="utf-8")
     (output_dir / "cybersec-agent.cron").write_text(cron_entry, encoding="utf-8")
 
-    print(f"🗓️ Scheduler files written to {service_dir} and {output_dir}")
+    logger.info("Scheduler files written to %s and %s", service_dir, output_dir)
     return service_dir / "cybersec-agent.service", output_dir / "cybersec-agent.cron"
 
 
 def main():
     """Entry point"""
+    logging.basicConfig(
+        level=logging.INFO,
+        format="%(asctime)s %(levelname)s %(name)s: %(message)s",
+    )
     args = parse_args()
 
     CONFIG["output_dir"] = Path(args.output_dir).resolve()

@@ -63,22 +63,66 @@ class CybersecAgentTests(unittest.TestCase):
         result = self.agent.sanitize_text(raw, max_length=20)
         self.assertEqual(result, "Hello world & friends")
 
-    def test_unreachable_rss_feed_is_skipped_with_nonfatal_warning(self):
+    def test_unreachable_rss_feed_retries_then_logs_and_continues(self):
         self.agent.stories = []
-        output = StringIO()
         with patch(
             "cybersec_agent.requests.get",
             side_effect=requests.ConnectionError("Network is unreachable"),
-        ):
-            with redirect_stdout(output):
-                self.agent.fetch_rss({
-                    "name": "Cybersecurity News",
-                    "url": "https://cybersecuritynews.com/feed/",
-                })
+        ) as get:
+            with patch("cybersec_agent.time.sleep") as sleep:
+                with self.assertLogs("cybersec_agent", level="ERROR") as logs:
+                    self.agent.fetch_rss({
+                        "name": "Cybersecurity News",
+                        "url": "https://cybersecuritynews.com/feed/",
+                    })
 
         self.assertEqual(self.agent.stories, [])
-        self.assertIn("skipping it and continuing with other feeds", output.getvalue())
-        self.assertNotIn("Error fetching", output.getvalue())
+        self.assertEqual(get.call_count, 3)
+        self.assertEqual([call.args[0] for call in sleep.call_args_list], [1, 2])
+        self.assertIn("skipping it and continuing with other feeds", logs.output[-1])
+
+    def test_news_sources_prioritize_cisa_and_vendor_advisories(self):
+        sources = {source["name"]: source for source in CONFIG["news_sources"]}
+        self.assertEqual(
+            sources["CISA Known Exploited Vulnerabilities"]["type"], "kev"
+        )
+        self.assertIn("Microsoft Security Response Center", sources)
+        self.assertIn("Cisco Security Advisories", sources)
+        self.assertIn("Fortinet PSIRT Advisories", sources)
+        self.assertEqual(
+            sum(source["type"] == "hn" for source in CONFIG["news_sources"]), 1
+        )
+
+    def test_kev_feed_creates_recent_official_advisory_stories(self):
+        self.agent.stories = []
+        payload = {
+            "vulnerabilities": [
+                {
+                    "cveID": "CVE-2026-1111",
+                    "vendorProject": "Fortinet",
+                    "product": "FortiOS",
+                    "vulnerabilityName": "Fortinet FortiOS authentication bypass",
+                    "dateAdded": "2026-11-06",
+                    "requiredAction": "Apply updates.",
+                    "dueDate": "2026-11-20",
+                }
+            ]
+        }
+        response = Mock()
+        response.json.return_value = payload
+        with patch("cybersec_agent.requests.get", return_value=response):
+            self.agent.fetch_kev({
+                "name": "CISA Known Exploited Vulnerabilities",
+                "url": "https://cisa.example/kev.json",
+            })
+
+        self.assertEqual(len(self.agent.stories), 1)
+        story = self.agent.stories[0]
+        self.assertIn("authentication bypass", story["title"])
+        self.assertIn("CVE-2026-1111", story["title"])
+        self.assertIn("CVE-2026-1111", story["url"])
+        self.assertIn("Required action: Apply updates.", story["summary"])
+        self.assertEqual(story["created"], "2026-11-06")
 
     def test_unconfigured_email_and_discord_are_silent_and_do_not_send(self):
         self.agent.config.update({

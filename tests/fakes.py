@@ -1,5 +1,7 @@
 """Offline stand-ins for the network so tests never touch the internet."""
 
+import requests
+
 from enrichment import EPSS_URL, KEV_URL, NVD_URL
 
 
@@ -10,7 +12,7 @@ class FakeResponse:
 
     def raise_for_status(self):
         if self.status_code >= 400:
-            raise RuntimeError(f"HTTP {self.status_code}")
+            raise requests.HTTPError(f"HTTP {self.status_code}")
 
     def json(self):
         return self._payload

@@ -11,6 +11,7 @@ never a made-up value, so callers can tell "not exploited" from "we don't know".
 """
 
 import json
+import logging
 import re
 import time
 from pathlib import Path
@@ -21,6 +22,9 @@ KEV_URL = "https://www.cisa.gov/sites/default/files/feeds/known_exploited_vulner
 EPSS_URL = "https://api.first.org/data/v1/epss"
 NVD_URL = "https://services.nvd.nist.gov/rest/json/cves/2.0"
 USER_AGENT = "CybersecNewsAgent/1.0"
+HTTP_RETRY_ATTEMPTS = 3
+HTTP_RETRY_BACKOFF = 1
+logger = logging.getLogger(__name__)
 
 CVE_RE = re.compile(r"\bCVE-\d{4}-\d{4,7}\b", re.IGNORECASE)
 
@@ -93,7 +97,7 @@ class DiskCache:
             tmp.replace(self.path)
             self.dirty = False
         except OSError as exc:
-            print(f"⚠️  Could not write enrichment cache: {exc}")
+            logger.warning("Could not write enrichment cache: %s", exc)
 
 
 class VulnEnricher:
@@ -111,9 +115,22 @@ class VulnEnricher:
     def _get_json(self, url, params=None, headers=None):
         merged = {"User-Agent": USER_AGENT}
         merged.update(headers or {})
-        response = self.http.get(url, params=params, headers=merged, timeout=HTTP_TIMEOUT)
-        response.raise_for_status()
-        return response.json()
+        for attempt in range(HTTP_RETRY_ATTEMPTS):
+            try:
+                response = self.http.get(
+                    url, params=params, headers=merged, timeout=HTTP_TIMEOUT
+                )
+                response.raise_for_status()
+                return response.json()
+            except requests.RequestException as exc:
+                if attempt + 1 == HTTP_RETRY_ATTEMPTS:
+                    raise
+                delay = HTTP_RETRY_BACKOFF * (2 ** attempt)
+                logger.warning(
+                    "GET %s failed (attempt %s/%s): %s; retrying in %s seconds",
+                    url, attempt + 1, HTTP_RETRY_ATTEMPTS, exc, delay
+                )
+                self.sleep(delay)
 
     # -- CISA KEV ---------------------------------------------------------
     def load_kev(self):
@@ -139,8 +156,8 @@ class VulnEnricher:
                 }
             self.kev = catalogue
             self.cache.set("kev", catalogue)
-        except Exception as exc:
-            print(f"⚠️  Could not load CISA KEV catalogue: {exc}")
+        except (requests.RequestException, ValueError, TypeError, AttributeError) as exc:
+            logger.error("Could not load CISA KEV catalogue: %s", exc)
             self.kev = None
         return self.kev
 
@@ -160,8 +177,8 @@ class VulnEnricher:
             batch = missing[start:start + EPSS_BATCH_SIZE]
             try:
                 payload = self._get_json(EPSS_URL, params={"cve": ",".join(batch)})
-            except Exception as exc:
-                print(f"⚠️  Could not fetch EPSS scores: {exc}")
+            except (requests.RequestException, ValueError, TypeError, AttributeError) as exc:
+                logger.error("Could not fetch EPSS scores: %s", exc)
                 continue
             for row in payload.get("data", []):
                 try:
@@ -189,8 +206,8 @@ class VulnEnricher:
         headers = {"apiKey": self.nvd_api_key} if self.nvd_api_key else None
         try:
             payload = self._get_json(NVD_URL, params={"cveId": cve_id}, headers=headers)
-        except Exception as exc:
-            print(f"⚠️  Could not fetch NVD data for {cve_id}: {exc}")
+        except (requests.RequestException, ValueError, TypeError, AttributeError) as exc:
+            logger.error("Could not fetch NVD data for %s: %s", cve_id, exc)
             return None
 
         vulns = payload.get("vulnerabilities", [])

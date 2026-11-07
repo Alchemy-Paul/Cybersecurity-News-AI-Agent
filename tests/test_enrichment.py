@@ -3,11 +3,13 @@ import sys
 import unittest
 from pathlib import Path
 
+import requests
+
 PROJECT_ROOT = str(Path(__file__).resolve().parents[1])
 if PROJECT_ROOT not in sys.path:
     sys.path.insert(0, PROJECT_ROOT)
 
-from enrichment import VulnEnricher, extract_cve_ids, severity_from_score
+from enrichment import NVD_URL, VulnEnricher, extract_cve_ids, severity_from_score
 from tests.fakes import FakeHttp
 from watchlist import load_watchlist, match_watchlist
 
@@ -107,6 +109,27 @@ class EnricherTests(unittest.TestCase):
         keyed = VulnEnricher(http=FakeHttp(), sleep=sleeps.append, nvd_api_key="k")
         keyed.enrich(["CVE-2026-1111", "CVE-2026-2222"])
         self.assertEqual(sleeps, [0.7])
+
+    def test_nvd_retries_transient_request_failure_with_backoff(self):
+        class FlakyNvdHttp:
+            def __init__(self):
+                self.delegate = FakeHttp()
+                self.nvd_failures = 0
+
+            def get(self, url, **kwargs):
+                if url == NVD_URL and self.nvd_failures == 0:
+                    self.nvd_failures += 1
+                    raise requests.ConnectionError("temporary network failure")
+                return self.delegate.get(url, **kwargs)
+
+        sleeps = []
+        http = FlakyNvdHttp()
+        enricher = VulnEnricher(http=http, sleep=sleeps.append)
+        records = enricher.enrich(["CVE-2026-1111"])
+
+        self.assertEqual(records["CVE-2026-1111"]["score"], 9.8)
+        self.assertEqual(http.delegate.calls["nvd"], 1)
+        self.assertEqual(sleeps, [1])
 
 
 class WatchlistTests(unittest.TestCase):
