@@ -35,6 +35,8 @@ Feed and enrichment HTTP requests are tried up to three times total. Between att
 - `enrichment.py` — CISA KEV, EPSS and NVD lookups with an on-disk cache
 - `watchlist.py` — watchlist loading and matching
 - `tests/` — offline unit tests (the network is faked; no internet needed)
+- `.env.example` — example environment configuration
+- `LICENSE` — MIT license
 - `docs/screenshots/` — project screenshots
 - `systemd/` — sample systemd service unit
 - `cybersec-agent.cron` — sample cron entry
@@ -50,7 +52,7 @@ Feed and enrichment HTTP requests are tried up to three times total. Between att
 ## Prerequisites
 
 - Linux or another Unix-like environment
-- Python 3.8+
+- Python 3.10+
 - Internet access for fetching feeds and NVD data
 - Optional: Groq API key for AI-generated triage questions
 - Optional: Slack webhook URL, Discord webhook URL, or SMTP credentials for delivery
@@ -91,6 +93,9 @@ SMTP_FROM=
 SMTP_TO=
 
 DISCORD_WEBHOOK_URL=
+
+NVD_API_KEY=
+WATCHLIST_FILE=
 ```
 
 3. Create and activate a virtual environment:
@@ -113,6 +118,16 @@ pip install -r requirements.txt
 ```
 
 The report’s evidence section is deterministic. If `GROQ_API_KEY` is configured, Groq may add a clearly separated section of AI-generated triage questions with validated story citations. Publisher-provided text is treated as untrusted input, and generated questions containing CVE IDs, severity labels, or CVSS scores absent from that story’s enrichment are rejected. The questions remain separate from verified CVE data and are hypotheses, not confirmed findings or remediation instructions. If no key is configured or the API fails, the evidence briefing is still generated without AI questions.
+
+## Testing
+
+The test suite runs without external network access. Use the project virtual environment:
+
+```bash
+./.venv/bin/python -m pytest -q
+```
+
+It covers feed retry behavior, CISA KEV aggregation, vendor advisories, CVE enrichment fallbacks, evidence generation, watchlist matching, story scoring, and output behavior.
 
 ## Vulnerability enrichment and "affects our stack"
 
@@ -158,6 +173,7 @@ The script creates these folders automatically when needed:
 
 - `output/briefings/` — markdown and HTML briefing reports named like `briefing_YYYY-MM-DD.md` and `briefing_YYYY-MM-DD.html`
 - `output/ioc_watchlists/` — candidate IOC reference files extracted from news titles and URLs; validate them before detection or blocking use
+- `output/cache/` — on-disk enrichment cache for CISA KEV, EPSS, and NVD responses
 
 Each run logs a summary of extracted IOCs and the final output paths.
 
