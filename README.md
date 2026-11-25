@@ -246,3 +246,7 @@ Add a line similar to:
 - Closely related headlines are grouped into one story with contributing sources shown. Stories without a usable publication date are marked unknown and receive no freshness bonus.
 - When CVSS data is unavailable, the report keeps the score unknown; any headline-based severity hint is explicitly labeled unverified.
 - The project includes a small unittest suite to verify sanitization, evidence reporting, scoring behavior, and CVE fallback logic.
+
+## License
+
+This project is licensed under the [MIT License](LICENSE).
